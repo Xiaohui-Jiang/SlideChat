@@ -1,93 +1,249 @@
-# SlideChat
+# 🔬 SlideChat
 
+A modern web application for viewing and discussing medical slides (WSI files) with an integrated chat interface. Built with React, TypeScript, and Express.js.
 
+## 🚀 Features
 
-## Getting started
+- **📁 File Upload**: Support for medical slide files (.svs) and regular images
+- **🔍 Slide Viewer**: High-resolution image viewing with OpenSeaDragon integration
+- **💬 Chat Interface**: Interactive chat panel for slide discussion
+- **🎯 ROI Selection**: Draw regions of interest on slides for focused analysis
+- **📱 Responsive Design**: Modern UI built with Tailwind CSS
+- **⚡ Real-time Updates**: Live file processing and chat updates
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## 🏗️ Architecture
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+### Frontend (React + TypeScript)
+- **Port**: 3000 (development)
+- **Framework**: React 19 with TypeScript
+- **Build Tool**: Vite 7
+- **Styling**: Tailwind CSS 3
+- **Image Viewer**: OpenSeaDragon for high-resolution slides
 
-## Add your files
+### Backend (Node.js + Express)
+- **Port**: 5050 (configurable)
+- **Framework**: Express.js 5
+- **File Processing**: Multer for uploads, planned OpenSlide integration
+- **Static Serving**: Public slides directory
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## 📁 Project Structure
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.oit.duke.edu/xj58/slidechat.git
-git branch -M main
-git push -uf origin main
+slidechat/
+├── README.md
+├── client/                 # React frontend
+│   ├── index.html         # HTML template
+│   ├── package.json       # Frontend dependencies
+│   ├── vite.config.ts     # Vite configuration & proxy
+│   ├── tailwind.config.js # Tailwind CSS config
+│   ├── postcss.config.js  # PostCSS config
+│   └── src/
+│       ├── main.tsx       # React entry point
+│       ├── App.tsx        # Main application component
+│       ├── index.css      # Global styles & Tailwind
+│       ├── types.ts       # TypeScript type definitions
+│       ├── components/    # React components
+│       │   ├── ChatPanel.tsx    # Chat interface
+│       │   ├── SlideViewer.tsx  # Image viewer
+│       │   └── UploadBar.tsx    # File upload
+│       └── lib/
+│           └── api.ts     # API communication layer
+└── server/                # Express backend
+    ├── index.js          # Main server file
+    ├── package.json      # Backend dependencies
+    ├── public/           # Static files
+    │   └── slides/       # Processed slide images
+    └── uploads/          # Temporary upload directory
 ```
 
-## Integrate with your tools
+## 🛠️ Installation
 
-- [ ] [Set up project integrations](https://gitlab.oit.duke.edu/xj58/slidechat/-/settings/integrations)
+### Prerequisites
+- Node.js 18+ 
+- npm or yarn
 
-## Collaborate with your team
+### Setup
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+1. **Clone the repository**
+   ```bash
+   git clone https://gitlab.oit.duke.edu/xj58/slidechat.git
+   cd slidechat
+   ```
 
-## Test and Deploy
+2. **Install backend dependencies**
+   ```bash
+   cd server
+   npm install
+   ```
 
-Use the built-in continuous integration in GitLab.
+3. **Install frontend dependencies**
+   ```bash
+   cd ../client
+   npm install
+   ```
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+## 🚀 Running the Application
 
-***
+### Development Mode
 
-# Editing this README
+1. **Start the backend server** (in one terminal):
+   ```bash
+   cd server
+   npm run dev
+   ```
+   Server will start on `http://localhost:5050`
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+2. **Start the frontend** (in another terminal):
+   ```bash
+   cd client
+   npm run dev
+   ```
+   Frontend will start on `http://localhost:3000`
 
-## Suggestions for a good README
+3. **Access the application**
+   Open your browser to `http://localhost:3000`
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+### Production Build
 
-## Name
-Choose a self-explaining name for your project.
+1. **Build the frontend**:
+   ```bash
+   cd client
+   npm run build
+   ```
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+2. **Preview production build**:
+   ```bash
+   npm run preview
+   ```
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+## 🔧 Configuration
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+### Backend Configuration
+The server can be configured via environment variables:
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+```bash
+PORT=5050  # Server port (default: 5050)
+```
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+### Frontend Configuration
+The Vite configuration handles:
+- **Proxy**: API calls to backend (`/api/*` → `http://localhost:5050`)
+- **Port**: Development server port (3000)
+- **Build**: Production optimizations
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+## 📡 API Endpoints
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+### Upload Slide
+```http
+POST /api/upload
+Content-Type: multipart/form-data
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+# Response
+{
+  "id": "slide_123",
+  "name": "lung_sample.svs", 
+  "imageUrl": "/public/slides/slide_123/preview.jpg",
+  "thumbnailUrl": "/public/slides/slide_123/thumb.jpg"
+}
+```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+### Get Slides
+```http
+GET /api/slides
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+# Response
+[
+  {
+    "id": "slide_123",
+    "name": "lung_sample.svs",
+    "imageUrl": "/public/slides/slide_123/preview.jpg", 
+    "thumbnailUrl": "/public/slides/slide_123/thumb.jpg",
+    "sourceType": "uploaded"
+  }
+]
+```
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+### Health Check
+```http
+GET /api/health
 
-## License
-For open source projects, say how it is licensed.
+# Response
+{
+  "status": "Server is running!"
+}
+```
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## 🎨 UI Components
+
+### SlideViewer
+- **Technology**: OpenSeaDragon for zoom/pan capabilities
+- **Features**: ROI selection, high-resolution viewing
+- **File Support**: Images and processed WSI files
+
+### ChatPanel  
+- **Features**: Message history, real-time chat
+- **Integration**: ROI analysis, slide discussion
+
+### UploadBar
+- **Support**: Drag & drop, file browser
+- **Types**: .svs files, images (jpg, png, etc.)
+- **Processing**: Automatic thumbnail generation
+
+## 🔄 Data Flow
+
+1. **File Upload**: User drops file → UploadBar → API → Server processing
+2. **Slide Display**: Processed files → SlideViewer → OpenSeaDragon rendering  
+3. **Chat**: User input → ChatPanel → API → Response handling
+4. **State Management**: App.tsx coordinates all component state
+
+## 🚧 Planned Features
+
+- **OpenSlide Integration**: Native .svs file processing
+- **AI Chat**: Integration with medical AI for slide analysis
+- **Collaboration**: Multi-user slide discussion
+- **Annotations**: Persistent ROI and note saving
+- **Export**: Slide analysis and chat export functionality
+
+## 🐛 Troubleshooting
+
+### Port Conflicts
+If you get port errors:
+```bash
+# Kill processes on port 3000
+lsof -ti:3000 | xargs kill -9
+
+# Kill processes on port 5050  
+lsof -ti:5050 | xargs kill -9
+```
+
+### API Connection Issues
+- Ensure backend is running on port 5050
+- Check Vite proxy configuration in `vite.config.ts`
+- Verify CORS settings in server
+
+### Build Issues
+- Clear node_modules: `rm -rf node_modules && npm install`
+- Clear Vite cache: `npx vite --force`
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📝 License
+
+This project is licensed under the ISC License.
+
+## 🙏 Acknowledgments
+
+- **OpenSeaDragon** - High-performance web-based image viewer
+- **Tailwind CSS** - Utility-first CSS framework  
+- **Vite** - Fast build tool and development server
+- **Express.js** - Web application framework for Node.js
+
+---
+
+Built with ❤️ for medical slide analysis and collaboration.
