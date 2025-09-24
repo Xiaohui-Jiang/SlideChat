@@ -12,6 +12,14 @@ export interface Rect {
   x: number; y: number; w: number; h: number;
 }
 
+export interface ROI {
+  id: ID;
+  name: string;
+  slideId: ID;
+  geometry: Rect;
+  createdAt: number;
+}
+
 export interface ChatMessage {
   id: ID;
   role: 'user' | 'assistant';

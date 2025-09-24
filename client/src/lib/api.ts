@@ -1,4 +1,4 @@
-import type { Slide } from '../types';
+import type { Slide, ROI, Rect } from '../types';
 
 const API = '/api';
 
@@ -50,4 +50,40 @@ export async function uploadSlideToServer(file: File) {
   const res = await fetch(`${API}/upload`, { method: 'POST', body: fd });
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
   return (await res.json()) as Slide;
+}
+
+// ROI API functions
+export async function fetchROIs(slideId: string): Promise<ROI[]> {
+  return safeFetch<ROI[]>(
+    `${API}/slides/${slideId}/rois`,
+    { method: 'GET' },
+    () => []
+  );
+}
+
+export async function createROI(slideId: string, name: string, geometry: Rect): Promise<ROI> {
+  const res = await fetch(`${API}/slides/${slideId}/rois`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, geometry })
+  });
+  if (!res.ok) throw new Error(`Create ROI failed: ${res.status}`);
+  return (await res.json()) as ROI;
+}
+
+export async function updateROIName(slideId: string, roiId: string, name: string): Promise<ROI> {
+  const res = await fetch(`${API}/slides/${slideId}/rois/${roiId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name })
+  });
+  if (!res.ok) throw new Error(`Update ROI failed: ${res.status}`);
+  return (await res.json()) as ROI;
+}
+
+export async function deleteROI(slideId: string, roiId: string): Promise<void> {
+  const res = await fetch(`${API}/slides/${slideId}/rois/${roiId}`, {
+    method: 'DELETE'
+  });
+  if (!res.ok) throw new Error(`Delete ROI failed: ${res.status}`);
 }

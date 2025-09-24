@@ -30,30 +30,64 @@ A modern web application for viewing and discussing medical slides (WSI files) w
 
 ```
 slidechat/
-├── README.md
-├── client/                 # React frontend
-│   ├── index.html         # HTML template
-│   ├── package.json       # Frontend dependencies
-│   ├── vite.config.ts     # Vite configuration & proxy
-│   ├── tailwind.config.js # Tailwind CSS config
-│   ├── postcss.config.js  # PostCSS config
-│   └── src/
-│       ├── main.tsx       # React entry point
-│       ├── App.tsx        # Main application component
-│       ├── index.css      # Global styles & Tailwind
-│       ├── types.ts       # TypeScript type definitions
-│       ├── components/    # React components
-│       │   ├── ChatPanel.tsx    # Chat interface
-│       │   ├── SlideViewer.tsx  # Image viewer
-│       │   └── UploadBar.tsx    # File upload
-│       └── lib/
-│           └── api.ts     # API communication layer
-└── server/                # Express backend
-    ├── index.js          # Main server file
-    ├── package.json      # Backend dependencies
-    ├── public/           # Static files
-    │   └── slides/       # Processed slide images
-    └── uploads/          # Temporary upload directory
+├─ README.md
+├─ .env.example                  # envs for dev (PORT, CORS_ORIGIN, paths)
+├─ package.json                  # root scripts (proxy run tasks)
+│
+├─ client/                       # React + Vite + TS + Tailwind
+│  ├─ index.html
+│  ├─ package.json
+│  ├─ vite.config.ts
+│  ├─ tailwind.config.js
+│  ├─ postcss.config.js
+│  └─ src/
+│     ├─ main.tsx
+│     ├─ App.tsx
+│     ├─ index.css
+│     ├─ routes/
+│     │  ├─ Slides.tsx          # gallery/list of slides (thumbnails)
+│     │  └─ SlideDetail.tsx     # big viewer + chat + ROI panel
+│     ├─ components/
+│     │  ├─ UploadBar.tsx
+│     │  ├─ SlideViewer.tsx     # OpenSeadragon wrapper, overlays
+│     │  ├─ ROIList.tsx         # add/rename/delete/select ROIs
+│     │  ├─ ChatPanel.tsx       # (co-pilot later) simple prompts now
+│     │  └─ AnalysisPanel.tsx   # artifacts (PNG) + metrics (JSON)
+│     ├─ lib/
+│     │  ├─ api.ts              # REST calls
+│     │  ├─ ws.ts               # (placeholder) future chat stream
+│     │  └─ auth.ts             # (optional) stub
+│     ├─ store/
+│     │  └─ appState.ts         # slide/ROI/run state (Zustand/Redux)
+│     └─ types.ts               # shared client types
+│
+└─ server/                       # Express (Node 20)
+   ├─ package.json
+   ├─ index.js                   # app bootstrap, CORS, /api/health, /public
+   ├─ config/
+   │  └─ env.js                  # reads PORT, UPLOAD_DIR, PUBLIC_DIR, CORS
+   ├─ routes/
+   │  ├─ slides.js               # POST /slides, GET /slides/:id, list
+   │  ├─ rois.js                 # POST/PATCH/DELETE /slides/:id/rois/:roiId
+   │  ├─ runs.js                 # POST /slides/:id/rois/:roiId/run, GET /runs/:runId
+   │  └─ health.js               # GET /api/health
+   ├─ services/
+   │  ├─ storage.js              # paths, save/read files, ensure dirs
+   │  ├─ roi.js                  # GeoJSON validate, polygon/rect utils
+   │  ├─ crops.js                # (MVP) rect crop via sharp/jimp; OpenSlide later
+   │  ├─ metrics.js              # mean/std/hist from crop
+   │  └─ reporter.js             # assemble summary JSON (+ optional MD/HTML)
+   ├─ plans/
+   │  └─ roi_quantify.js         # steps: crop → metrics → report (tiny array)
+   ├─ data/
+   │  ├─ db.json                 # (MVP) slides/rois/runs registry (or SQLite)
+   │  └─ schemas/                # JSON schemas for inputs/outputs (zod/ajv)
+   ├─ public/                    # served at /public (artifacts)
+   │  └─ slides/
+   │     └─ <slideId>/...        # crops, overlays, reports
+   ├─ uploads/                   # raw uploads (SVS/PNG/TIFF)
+   └─ logs/                      # access/error/run logs (winston/pino)
+
 ```
 
 ## 🛠️ Installation

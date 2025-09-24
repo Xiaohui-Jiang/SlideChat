@@ -13,6 +13,63 @@
 
 ### Tianhao  
 - [ ] Prepare for file management. Create a dedicated folder outside the GitLab repository to manage files. Plan to store images together with other preprocessed files related to each image. At this stage, assume files are local.  
+Proposed data file structure:
+/data/slidechat_files/
+  ├─ slide_001/
+  │   ├─ raw/
+  │   │   ├─ slide_001.svs
+  │   │   ├─ cells.csv
+  │   │   ├─ transcripts.csv
+  │   │   └─ boundaries.csv
+  │   ├─ preprocessed/
+  │   │   ├─ thumbnail.png
+  │   │   ├─ roi_1_crop.png
+  │   │   └─ roi_2_crop.png
+  │   ├─ analysis/
+  │   │   ├─ roi_1_metrics.json
+  │   │   ├─ roi_2_metrics.json
+  │   │   ├─ niche_annotation.json
+  │   │   └─ cci_results.json
+  │   └─ metadata.json
+  │
+  └─ slide_002/
+      └─ ...
+      
+Assumed data json file:
+{
+  "slideId": "slide_001",
+  "uploadedAt": "2025-09-25T14:00:00Z",
+  "raw": {
+    "image": "raw/slide_001.svs",
+    "xeniumOutputs": {
+      "cells": "raw/cells.csv",
+      "transcripts": "raw/transcripts.csv",
+      "boundaries": "raw/boundaries.csv"
+    }
+  },
+  "rois": [
+    {
+      "roiId": "roi_1",
+      "name": "Tumor margin",
+      "geometry": "polygon",
+      "crop": "preprocessed/roi_1_crop.png",
+      "analysis": [
+        "analysis/roi_1_metrics.json"
+      ]
+    },
+    {
+      "roiId": "roi_2",
+      "name": "Stroma region",
+      "geometry": "rect",
+      "crop": "preprocessed/roi_2_crop.png",
+      "analysis": [
+        "analysis/roi_2_metrics.json",
+        "analysis/niche_annotation.json"
+      ]
+    }
+  ]
+}
+
 - [ ] Adjust the display logic: place the thumbnail on the far left, enlarge the image display area by default, and reduce the chat area.  
 - [ ] Enable storing multiple ROIs, display them in the lower-left area, and allow naming of each ROI.  
 
