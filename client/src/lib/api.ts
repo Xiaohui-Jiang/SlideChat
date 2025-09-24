@@ -29,15 +29,26 @@ export async function fetchSlides(): Promise<Slide[]> {
 }
 
 export async function sendChat(message: string): Promise<string> {
-  return safeFetch<{ reply: string }>(
-    `${API}/chat`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
-    },
-    () => ({ reply: `Mock reply: I received “${message}”.` })
-  ).then(r => r.reply);
+  console.log('🌐 API: Sending chat request to server:', message);
+  try {
+    const result = await safeFetch<{ reply: string }>(
+      `${API}/chat`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      },
+      () => {
+        console.log('⚠️ API: Using fallback mock response');
+        return { reply: `Mock reply: I received "${message}".` };
+      }
+    );
+    console.log('🌐 API: Got response from server:', result);
+    return result.reply;
+  } catch (error) {
+    console.error('🚨 API ERROR in sendChat:', error);
+    throw error;
+  }
 }
 
 /**

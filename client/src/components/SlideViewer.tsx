@@ -265,13 +265,28 @@ export default function SlideViewer({ slides, selectedId, onSelect, onAnalyzeROI
                     <div className="flex-1">
                       <div className="font-medium">{roi.name}</div>
                       <div className="text-gray-500">
-                        {roi.geometry.w|0} × {roi.geometry.h|0} px
+                        {roi.geometry.w | 0} × {roi.geometry.h | 0} px
                       </div>
                     </div>
                     <div className="flex gap-1">
                       <button
                         className="px-2 py-1 bg-blue-600 text-white rounded text-xs"
-                        onClick={() => selectedROI?.id === roi.id && selected && onAnalyzeROI?.(roi, selected)}
+                        onClick={() => {
+                          console.log('🔍 STEP 0a: Analyze button clicked in ROI list!', {
+                            roi: roi.name,
+                            selectedROI: selectedROI?.name,
+                            selected: selected?.name,
+                            onAnalyzeROI: !!onAnalyzeROI
+                          });
+                          if (selected && onAnalyzeROI) {
+                            // Auto-select this ROI and then analyze it
+                            setSelectedROI(roi);
+                            console.log('🔍 Auto-selecting ROI and analyzing:', roi.name);
+                            onAnalyzeROI(roi, selected);
+                          } else {
+                            console.log('🚨 Analyze button click failed - missing slide or callback');
+                          }
+                        }}
                       >
                         Analyze
                       </button>
@@ -298,7 +313,19 @@ export default function SlideViewer({ slides, selectedId, onSelect, onAnalyzeROI
           {selectedROI && (
             <button
               className="px-3 py-1.5 bg-blue-600 text-white rounded-xl"
-              onClick={() => selected && onAnalyzeROI?.(selectedROI, selected)}
+              onClick={() => {
+                console.log('🔍 STEP 0b: Analyze Selected ROI button clicked!', {
+                  selectedROI: selectedROI?.name,
+                  selected: selected?.name,
+                  condition: selected && selectedROI,
+                  onAnalyzeROI: !!onAnalyzeROI
+                });
+                if (selected && selectedROI && onAnalyzeROI) {
+                  onAnalyzeROI(selectedROI, selected);
+                } else {
+                  console.log('🚨 Analyze Selected ROI click failed - condition not met');
+                }
+              }}
             >
               Analyze Selected ROI
             </button>

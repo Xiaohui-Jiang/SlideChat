@@ -122,6 +122,7 @@ app.delete('/api/slides/:slideId/rois/:roiId', (req, res) => {
 
 // Chat endpoint
 app.post('/api/chat', (req, res) => {
+  console.log('🔵 SERVER: Received chat request:', req.body);
   const { message } = req.body;
   // Mock chat response
   const responses = [
@@ -130,6 +131,7 @@ app.post('/api/chat', (req, res) => {
     `The morphological features in this area indicate potential pathological changes worth further investigation.`,
   ];
   const response = responses[Math.floor(Math.random() * responses.length)];
+  console.log('🔵 SERVER: Sending response:', response);
   res.json({ reply: response });
 });
 
