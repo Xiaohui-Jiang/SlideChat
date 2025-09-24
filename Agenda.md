@@ -13,6 +13,7 @@
 
 ### Tianhao  
 - [ ] Prepare for file management. Create a dedicated folder outside the GitLab repository to manage files. Plan to store images together with other preprocessed files related to each image. At this stage, assume files are local.  
+
 Proposed data file structure:
 ```
 /data/slidechat_files/
@@ -104,6 +105,12 @@ Assumed data json file:
 - ROI analyze button required pre-selection, now auto-selects ROI on analyze
 - Frontend-backend API communication flow now properly traced with debugging
 - Server running on port 5050, client on port 3000 with proper proxy configuration
+
+
+**Poentail Issue:**
+ - ROI is not temperarily stored in Server RAM while the server is running. When the server is done or stopped, Memory lost.
+ - Still not too clear about the workflow. And we may need the real example to see how it works
+ - Data file Storage Structure is not clear.
 
 **Next Steps:**
 - Verify complete analyze workflow from ROI creation to server response
