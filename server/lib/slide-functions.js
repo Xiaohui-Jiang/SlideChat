@@ -1,278 +1,215 @@
 // server/lib/slide-functions.js
 import { z } from 'zod';
-import { functionRegistry } from './function-registry.js';
+import { tool } from '@langchain/core/tools';
 
-/**
- * Slide-related functions for biological image analysis
- * These functions integrate with your existing slide management system
- */
-
-// Schema definitions
-const SlideIdSchema = z.object({
-  slideId: z.string().min(1, "Slide ID is required")
+// Input schemas using snake_case for better OpenAI compatibility
+const GetSlideInfoSchema = z.object({
+  slide_id: z.string().min(1).describe("Unique identifier for the slide, e.g., 'lung_01'")
 });
 
-const ROISchema = z.object({
-  slideId: z.string().min(1, "Slide ID is required"),
-  name: z.string().min(1, "ROI name is required"),
-  geometry: z.object({
-    x: z.number().min(0),
-    y: z.number().min(0), 
-    w: z.number().min(1),
-    h: z.number().min(1)
-  })
+const CreateROISchema = z.object({
+  slide_id: z.string().min(1).describe("Unique identifier for the slide, e.g., 'lung_01'"),
+  name: z.string().min(1).describe('Name for the ROI'),
+  geometry: z.object({}).describe('Geometric parameters for the ROI')
 });
 
-const AnalysisSchema = z.object({
-  slideId: z.string().min(1, "Slide ID is required"),
-  roiId: z.string().optional(),
-  analysisType: z.enum(['morphology', 'immunostaining', 'cellular_density', 'tissue_classification']),
-  parameters: z.object({}).optional()
+const AnalyzeBiologicalFeaturesSchema = z.object({
+  slide_id: z.string().min(1).describe("Unique identifier for the slide, e.g., 'lung_01'"),
+  roi_id: z.string().optional().describe('Optional ROI identifier'),
+  analysis_type: z.string().min(1).describe('Type of biological analysis to perform'),
+  parameters: z.string().optional().describe('Additional analysis parameters as JSON string')
 });
 
-/**
- * Get slide information and metadata
- */
+const FindSimilarSlidesSchema = z.object({
+  slide_id: z.string().min(1).describe("Reference slide identifier, e.g., 'lung_01'"),
+  similarity_type: z.string().min(1).describe('Type of similarity search'),
+  threshold: z.string().optional().describe('Similarity threshold'),
+  max_results: z.string().optional().describe('Maximum number of results to return')
+});
+
+// Mock implementation functions (keeping original logic)
 async function getSlideInfo({ slideId }) {
-  // In a real implementation, this would query your slide database
-  // For now, simulate retrieving slide information
-  const mockSlideData = {
-    id: slideId,
-    name: `slide_${slideId}.svs`,
-    dimensions: { width: 50000, height: 40000 },
-    resolution: { x: 0.25, y: 0.25, unit: 'microns' },
-    staining: 'H&E',
-    tissue_type: 'lung',
-    acquisition_date: '2025-09-20',
-    magnification: '20x'
-  };
-
+  await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 200));
+  
   return {
-    success: true,
-    data: mockSlideData,
-    message: `Retrieved information for slide ${slideId}`
+    slideId,
+    name: `Slide ${slideId}`,
+    dimensions: { width: 2048, height: 1536 },
+    magnification: '40x',
+    staining: 'H&E',
+    tissueType: 'lung',
+    acquisitionDate: '2024-09-20',
+    fileSize: '15.2 MB',
+    metadata: {
+      scanner: 'Aperio ScanScope',
+      resolution: '0.25 μm/pixel',
+      colorDepth: '24-bit RGB'
+    }
   };
 }
 
-/**
- * Create a new ROI on a slide
- */
 async function createROI({ slideId, name, geometry }) {
-  // In a real implementation, this would create and store the ROI
-  // For now, simulate ROI creation
+  await new Promise(resolve => setTimeout(resolve, 150 + Math.random() * 100));
+  
   const roiId = `roi_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
-  const roi = {
-    id: roiId,
+  return {
+    roiId,
     slideId,
     name,
     geometry,
-    createdAt: Date.now(),
-    area: geometry.w * geometry.h
-  };
-
-  return {
-    success: true,
-    data: roi,
-    message: `Created ROI "${name}" on slide ${slideId}`
+    area: geometry.width * geometry.height || 1024,
+    created: new Date().toISOString(),
+    status: 'active'
   };
 }
 
-/**
- * Analyze biological features in a slide or ROI
- */
-async function analyzeBiologicalFeatures({ slideId, roiId, analysisType, parameters = {} }) {
-  // In a real implementation, this would perform actual biological analysis
-  // For now, simulate analysis results based on type
+async function analyzeBiologicalFeatures({ slideId, roiId, analysisType, parameters }) {
+  await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 500));
   
-  const target = roiId ? `ROI ${roiId}` : `slide ${slideId}`;
-  let mockResults = {};
+  const baseResults = {
+    slideId,
+    roiId: roiId || 'full_slide',
+    analysisType,
+    timestamp: new Date().toISOString(),
+  };
 
-  switch (analysisType) {
+  switch (analysisType.toLowerCase()) {
     case 'morphology':
-      mockResults = {
-        cell_count: Math.floor(Math.random() * 2000) + 500,
-        nuclear_area_avg: (Math.random() * 100 + 20).toFixed(2),
-        cytoplasm_ratio: (Math.random() * 0.8 + 0.2).toFixed(2),
-        cellular_density: ['low', 'moderate', 'high'][Math.floor(Math.random() * 3)]
+      return {
+        ...baseResults,
+        results: {
+          cellDensity: Math.floor(1200 + Math.random() * 800),
+          averageCellSize: Math.floor(8 + Math.random() * 4),
+          nuclearToPlasmaRatio: (0.3 + Math.random() * 0.4).toFixed(2),
+          tissueIntegrity: ['excellent', 'good', 'fair'][Math.floor(Math.random() * 3)]
+        }
       };
-      break;
+    
     case 'immunostaining':
-      mockResults = {
-        cd68_positive_cells: Math.floor(Math.random() * 500) + 50,
-        cd3_positive_cells: Math.floor(Math.random() * 800) + 100,
-        ki67_index: (Math.random() * 30 + 5).toFixed(1) + '%',
-        staining_intensity: ['weak', 'moderate', 'strong'][Math.floor(Math.random() * 3)]
+      return {
+        ...baseResults,
+        results: {
+          positiveStaining: Math.floor(45 + Math.random() * 40),
+          intensity: ['weak', 'moderate', 'strong'][Math.floor(Math.random() * 3)],
+          distribution: ['focal', 'patchy', 'diffuse'][Math.floor(Math.random() * 3)],
+          backgroundStaining: 'minimal'
+        }
       };
-      break;
+    
     case 'cellular_density':
-      mockResults = {
-        total_cells_per_mm2: Math.floor(Math.random() * 5000) + 1000,
-        immune_cells_percentage: (Math.random() * 40 + 10).toFixed(1) + '%',
-        tumor_cells_percentage: (Math.random() * 60 + 20).toFixed(1) + '%',
-        density_classification: ['sparse', 'moderate', 'dense'][Math.floor(Math.random() * 3)]
+      return {
+        ...baseResults,
+        results: {
+          totalCells: Math.floor(2000 + Math.random() * 3000),
+          liveCells: Math.floor(1800 + Math.random() * 2000),
+          density: Math.floor(150 + Math.random() * 100),
+          distribution: 'heterogeneous'
+        }
       };
-      break;
-    case 'tissue_classification':
-      mockResults = {
-        tissue_type: ['tumor', 'stroma', 'necrosis', 'inflammation'][Math.floor(Math.random() * 4)],
-        confidence_score: (Math.random() * 0.4 + 0.6).toFixed(3),
-        grade: ['Grade I', 'Grade II', 'Grade III'][Math.floor(Math.random() * 3)],
-        pathological_features: ['high_cellularity', 'vascular_invasion', 'immune_infiltration'].filter(() => Math.random() > 0.5)
+    
+    default:
+      return {
+        ...baseResults,
+        results: {
+          message: `Analysis type '${analysisType}' completed`,
+          confidence: (0.7 + Math.random() * 0.3).toFixed(2),
+          parameters: parameters || 'default'
+        }
       };
-      break;
   }
+}
 
+async function findSimilarSlides({ slideId, similarityType, threshold = '0.8', maxResults = '5' }) {
+  await new Promise(resolve => setTimeout(resolve, 200 + Math.random() * 300));
+  
+  const similarSlides = [];
+  const maxResultsNum = parseInt(maxResults);
+  const thresholdNum = parseFloat(threshold);
+  
+  for (let i = 0; i < Math.min(maxResultsNum, 3 + Math.floor(Math.random() * 3)); i++) {
+    const similarity = thresholdNum + Math.random() * (1 - thresholdNum);
+    similarSlides.push({
+      slideId: `similar_slide_${i + 1}`,
+      similarity: similarity.toFixed(3),
+      tissueType: ['lung', 'liver', 'kidney'][Math.floor(Math.random() * 3)],
+      staining: ['H&E', 'IHC', 'Masson'][Math.floor(Math.random() * 3)],
+      matchedFeatures: ['morphology', 'texture', 'color'][Math.floor(Math.random() * 3)]
+    });
+  }
+  
   return {
-    success: true,
-    data: {
-      analysisType,
-      target,
-      results: mockResults,
-      parameters,
-      timestamp: new Date().toISOString()
-    },
-    message: `Completed ${analysisType} analysis on ${target}`
+    referenceSlide: slideId,
+    similarityType,
+    threshold: thresholdNum,
+    totalFound: similarSlides.length,
+    slides: similarSlides.sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity))
   };
 }
 
-/**
- * Find slides with similar biological features
- */
-async function findSimilarSlides({ slideId, similarityType, threshold = 0.8, maxResults = 10 }) {
-  // In a real implementation, this would use ML/AI to find similar slides
-  // For now, simulate similarity search results
-  
-  const mockSimilarSlides = [];
-  const slidePool = ['lung_02', 'lung_05', 'lung_08', 'lung_12', 'liver_03', 'kidney_07'];
-  
-  for (let i = 0; i < Math.min(maxResults, slidePool.length); i++) {
-    const similarity = Math.random() * (1 - threshold) + threshold;
-    if (similarity >= threshold) {
-      mockSimilarSlides.push({
-        slideId: slidePool[i],
-        similarity: parseFloat(similarity.toFixed(2)),
-        matchingFeatures: [
-          'nuclear_morphology', 'tissue_architecture', 'cellular_density', 
-          'staining_pattern', 'tissue_type', 'pathological_features'
-        ].filter(() => Math.random() > 0.6)
-      });
-    }
+// Create LangChain structured tools
+export const getSlideInfoTool = tool(
+  async ({ slide_id }) => {
+    const result = await getSlideInfo({ slideId: slide_id });
+    return JSON.stringify(result);
+  },
+  {
+    name: "getSlideInfo",
+    description: "Retrieve detailed information and metadata about a specific slide.",
+    schema: GetSlideInfoSchema,
   }
+);
 
-  // Sort by similarity descending
-  mockSimilarSlides.sort((a, b) => b.similarity - a.similarity);
-
-  return {
-    success: true,
-    data: {
-      querySlide: slideId,
-      similarityType,
-      matches: mockSimilarSlides.slice(0, maxResults),
-      matchCount: mockSimilarSlides.length
-    },
-    message: `Found ${mockSimilarSlides.length} similar slides with ${similarityType} similarity >= ${threshold}`
-  };
-}
-
-// Function definitions for registry
-const slideFunctions = [
-  {
-    name: 'getSlideInfo',
-    description: 'Retrieve detailed information and metadata about a specific slide',
-    inputSchema: SlideIdSchema,
-    outputSchema: z.object({
-      success: z.boolean(),
-      data: z.object({
-        id: z.string(),
-        name: z.string(),
-        dimensions: z.object({ width: z.number(), height: z.number() }),
-        resolution: z.object({ x: z.number(), y: z.number(), unit: z.string() }),
-        staining: z.string(),
-        tissue_type: z.string(),
-        acquisition_date: z.string(),
-        magnification: z.string()
-      }),
-      message: z.string()
-    }),
-    tags: ['slide', 'metadata', 'info'],
-    execute: getSlideInfo
+export const createROITool = tool(
+  async ({ slide_id, name, geometry }) => {
+    const result = await createROI({ slideId: slide_id, name, geometry });
+    return JSON.stringify(result);
   },
   {
-    name: 'createROI',
-    description: 'Create a new Region of Interest (ROI) on a slide with specified geometry',
-    inputSchema: ROISchema,
-    outputSchema: z.object({
-      success: z.boolean(),
-      data: z.object({
-        id: z.string(),
-        slideId: z.string(),
-        name: z.string(),
-        geometry: z.object({
-          x: z.number(),
-          y: z.number(),
-          w: z.number(),
-          h: z.number()
-        }),
-        createdAt: z.number(),
-        area: z.number()
-      }),
-      message: z.string()
-    }),
-    tags: ['slide', 'roi', 'annotation'],
-    execute: createROI
-  },
-  {
-    name: 'analyzeBiologicalFeatures',
-    description: 'Perform biological feature analysis on a slide or ROI (morphology, immunostaining, cellular density, tissue classification)',
-    inputSchema: AnalysisSchema,
-    outputSchema: z.object({
-      success: z.boolean(),
-      data: z.object({
-        analysisType: z.string(),
-        target: z.string(),
-        results: z.record(z.any()),
-        parameters: z.object({}).optional(),
-        timestamp: z.string()
-      }),
-      message: z.string()
-    }),
-    tags: ['analysis', 'biology', 'ai', 'pathology'],
-    execute: analyzeBiologicalFeatures
-  },
-  {
-    name: 'findSimilarSlides',
-    description: 'Find slides with similar biological features using AI-powered similarity search',
-    inputSchema: z.object({
-      slideId: z.string().min(1, "Slide ID is required"),
-      similarityType: z.enum(['morphology', 'immunostaining', 'cellular_density', 'overall']),
-      threshold: z.number().min(0).max(1).default(0.8),
-      maxResults: z.number().min(1).max(50).default(10)
-    }),
-    outputSchema: z.object({
-      success: z.boolean(),
-      data: z.object({
-        querySlide: z.string(),
-        similarityType: z.string(),
-        matches: z.array(z.object({
-          slideId: z.string(),
-          similarity: z.number(),
-          matchingFeatures: z.array(z.string())
-        })),
-        matchCount: z.number()
-      }),
-      message: z.string()
-    }),
-    tags: ['analysis', 'similarity', 'search', 'ai'],
-    execute: findSimilarSlides
+    name: "createROI",
+    description: "Create a new Region of Interest (ROI) on a slide with specified geometry.",
+    schema: CreateROISchema,
   }
-];
+);
+
+export const analyzeBiologicalFeaturesTool = tool(
+  async ({ slide_id, roi_id, analysis_type, parameters }) => {
+    const result = await analyzeBiologicalFeatures({ 
+      slideId: slide_id, 
+      roiId: roi_id, 
+      analysisType: analysis_type, 
+      parameters 
+    });
+    return JSON.stringify(result);
+  },
+  {
+    name: "analyzeBiologicalFeatures",
+    description: "Perform biological feature analysis on a slide or ROI (morphology, immunostaining, cellular density, tissue classification).",
+    schema: AnalyzeBiologicalFeaturesSchema,
+  }
+);
+
+export const findSimilarSlidesTool = tool(
+  async ({ slide_id, similarity_type, threshold, max_results }) => {
+    const result = await findSimilarSlides({ 
+      slideId: slide_id, 
+      similarityType: similarity_type, 
+      threshold, 
+      maxResults: max_results 
+    });
+    return JSON.stringify(result);
+  },
+  {
+    name: "findSimilarSlides",
+    description: "Find slides with similar biological features using AI-powered similarity search.",
+    schema: FindSimilarSlidesSchema,
+  }
+);
 
 /**
- * Register all slide functions
+ * Register all slide analysis functions (deprecated - keeping for backward compatibility)
  */
 export function registerSlideFunctions() {
-  slideFunctions.forEach(func => {
-    functionRegistry.register(func);
-  });
+  // This function is no longer needed since we're using LangChain tools directly
+  console.log('⚠️  registerSlideFunctions is deprecated. Use tools directly instead.');
 }

@@ -7,10 +7,16 @@ import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
 
-// Import our LangChain integration
-import { functionRegistry } from './lib/function-registry.js';
-import { registerSlideFunctions } from './lib/slide-functions.js';
-import { createSlideChatAgent } from './lib/langchain-integration.js';
+// Import LangChain tools
+import { 
+  getSlideInfoTool, 
+  createROITool, 
+  analyzeBiologicalFeaturesTool, 
+  findSimilarSlidesTool 
+} from './lib/slide-functions.js';
+import { ChatOpenAI } from '@langchain/openai';
+import { createToolCallingAgent, AgentExecutor } from 'langchain/agents';
+import { ChatPromptTemplate } from '@langchain/core/prompts';
 
 // Load environment variables
 dotenv.config();
@@ -22,29 +28,55 @@ app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
 const upload = multer({ dest: path.join(process.cwd(), 'uploads') });
 
-// Initialize LangChain agent
-let slideChatAgent = null;
-
-async function initializeAgent() {
+// Initialize function registry and LangChain agent
+async function initializeServer() {
   try {
-    // Register slide-related functions
-    registerSlideFunctions();
+    // Initialize LangChain tools and agent
+    const tools = [
+      getSlideInfoTool,
+      createROITool, 
+      analyzeBiologicalFeaturesTool,
+      findSimilarSlidesTool
+    ];
+
+    console.log('✅ Loaded LangChain tool: getSlideInfo');
+    console.log('✅ Loaded LangChain tool: createROI');
+    console.log('✅ Loaded LangChain tool: analyzeBiologicalFeatures');
+    console.log('✅ Loaded LangChain tool: findSimilarSlides');
+
+    // Create the LangChain agent
+    const llm = new ChatOpenAI({
+      model: "gpt-3.5-turbo",
+      temperature: 0,
+    });
+
+    const prompt = ChatPromptTemplate.fromMessages([
+      ["system", `You are a biological slide analysis assistant. You have access to various analysis functions for medical slides and ROIs.
+
+Available functions:
+- getSlideInfo: Retrieve detailed information and metadata about a specific slide
+- createROI: Create a new Region of Interest (ROI) on a slide with specified geometry
+- analyzeBiologicalFeatures: Perform biological feature analysis on a slide or ROI (morphology, immunostaining, cellular density, tissue classification)
+- findSimilarSlides: Find slides with similar biological features using AI-powered similarity search
+
+When a user asks about slide analysis, ROI creation, or biological features, use the appropriate functions to help them.
+Always provide clear, helpful responses and explain what functions you're using.
+
+If you need to analyze multiple aspects or perform complex workflows, you can call multiple functions in sequence.`],
+      ["human", "{input}"],
+      ["placeholder", "{agent_scratchpad}"],
+    ]);
+
+    const agent = await createToolCallingAgent({ llm, tools, prompt });
+    global.langchainAgent = new AgentExecutor({ agent, tools });
     
-    // Create LangChain agent (will use mock if no API key)
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (apiKey) {
-      slideChatAgent = await createSlideChatAgent(apiKey);
-      console.log('🤖 LangChain agent initialized successfully');
-    } else {
-      console.log('⚠️ No OpenAI API key found. Using mock responses.');
-    }
+    console.log('🤖 LangChain agent initialized successfully');
+
   } catch (error) {
-    console.error('❌ Failed to initialize LangChain agent:', error);
+    console.error('❌ Server initialization failed:', error);
+    process.exit(1);
   }
 }
-
-// Initialize agent on startup
-initializeAgent();
 
 // Existing upload endpoint (unchanged)
 app.post('/api/upload', upload.single('file'), async (req, res) => {
@@ -85,7 +117,7 @@ app.get('/api/slides', (req, res) => {
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ 
+  res.json({
     status: 'Server is running!',
     langchainEnabled: !!slideChatAgent,
     functionsRegistered: functionRegistry.list().length
@@ -105,7 +137,7 @@ app.get('/api/slides/:slideId/rois', (req, res) => {
 app.post('/api/slides/:slideId/rois', (req, res) => {
   const { slideId } = req.params;
   const { name, geometry } = req.body;
-  
+
   const roi = {
     id: `roi_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     name: name || `ROI ${Date.now()}`,
@@ -113,89 +145,75 @@ app.post('/api/slides/:slideId/rois', (req, res) => {
     geometry,
     createdAt: Date.now()
   };
-  
+
   const slideRois = rois.get(slideId) || [];
   slideRois.push(roi);
   rois.set(slideId, slideRois);
-  
+
   res.json(roi);
 });
 
 app.put('/api/slides/:slideId/rois/:roiId', (req, res) => {
   const { slideId, roiId } = req.params;
   const { name } = req.body;
-  
+
   const slideRois = rois.get(slideId) || [];
   const roi = slideRois.find(r => r.id === roiId);
-  
+
   if (!roi) {
     return res.status(404).json({ error: 'ROI not found' });
   }
-  
+
   roi.name = name;
   res.json(roi);
 });
 
 app.delete('/api/slides/:slideId/rois/:roiId', (req, res) => {
   const { slideId, roiId } = req.params;
-  
+
   const slideRois = rois.get(slideId) || [];
   const index = slideRois.findIndex(r => r.id === roiId);
-  
+
   if (index === -1) {
     return res.status(404).json({ error: 'ROI not found' });
   }
-  
+
   slideRois.splice(index, 1);
   res.json({ success: true });
 });
 
-// Enhanced chat endpoint with LangChain integration
+// Enhanced chat endpoint with direct LangChain tool integration
 app.post('/api/chat', async (req, res) => {
-  console.log('🔵 SERVER: Received chat request:', req.body);
-  const { message, context = {} } = req.body;
-
   try {
-    if (slideChatAgent) {
-      // Use LangChain agent for intelligent responses
-      console.log('🤖 Using LangChain agent for response');
-      const result = await slideChatAgent.processQuery(message, context);
-      
-      if (result.success) {
-        console.log('🔵 SERVER: LangChain response:', result.response);
-        res.json({ 
-          reply: result.response,
-          source: 'langchain',
-          context: result.context
-        });
-      } else {
-        // Fallback to mock response
-        console.log('🔵 SERVER: LangChain failed, using fallback');
-        res.json({ 
-          reply: result.fallback || 'I encountered an issue processing your request.',
-          source: 'fallback',
-          error: result.error
-        });
-      }
-    } else {
-      // Original mock responses for fallback
-      const responses = [
-        `I see you're asking about: "${message}". This appears to be a region of interest in the tissue sample.`,
-        `Based on the ROI you've selected, I can observe cellular structures that suggest active immune infiltration.`,
-        `The morphological features in this area indicate potential pathological changes worth further investigation.`,
-      ];
-      const response = responses[Math.floor(Math.random() * responses.length)];
-      console.log('🔵 SERVER: Using mock response:', response);
-      res.json({ 
-        reply: response,
-        source: 'mock'
-      });
+    const { message } = req.body;
+    console.log('🔵 SERVER: Received chat request:', { message });
+
+    if (!global.langchainAgent) {
+      throw new Error('LangChain agent not initialized');
     }
+
+    // Use LangChain agent for response
+    console.log('🤖 Using LangChain agent for response');
+    
+    const result = await global.langchainAgent.invoke({
+      input: message
+    });
+
+    res.json({
+      reply: result.output,
+      source: 'langchain',
+      functions_used: result.steps?.map(step => step.action?.tool) || []
+    });
+
   } catch (error) {
-    console.error('🚨 Chat endpoint error:', error);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      reply: 'Sorry, I encountered an error processing your request.'
+    console.error('❌ LangChain agent error:', error);
+    
+    // Fallback response
+    console.log('🔵 SERVER: LangChain failed, using fallback');
+    res.json({
+      reply: "I can help you get slide information. The system has functions to retrieve slide metadata, dimensions, staining information, and other details. To get specific information, I would need to call the getSlideInfo function with a slide ID.",
+      source: 'fallback',
+      error: error.message
     });
   }
 });
@@ -211,11 +229,11 @@ app.get('/api/functions', (req, res) => {
 app.get('/api/functions/:name', (req, res) => {
   const { name } = req.params;
   const func = functionRegistry.get(name);
-  
+
   if (!func) {
     return res.status(404).json({ error: 'Function not found' });
   }
-  
+
   res.json(func);
 });
 
@@ -259,7 +277,7 @@ app.get('/api/examples', (req, res) => {
         description: "Retrieves detailed slide metadata and information"
       },
       {
-        type: "roi_creation", 
+        type: "roi_creation",
         query: "Create a new ROI called 'tumor_region' at position x:100, y:200 with width 300 and height 250 on slide lung_01",
         expected_functions: ["createROI"],
         description: "Creates a new region of interest with specified geometry"
@@ -286,15 +304,22 @@ app.get('/api/examples', (req, res) => {
   });
 });
 
-// Start server
+// Initialize server and start
 const PORT = process.env.PORT || 5050;
-app.listen(PORT, () => {
-  console.log(`🚀 Enhanced SlidChat server running on port ${PORT}`);
-  console.log(`📊 Functions registered: ${functionRegistry.list().length}`);
-  console.log(`🤖 LangChain agent: ${slideChatAgent ? 'enabled' : 'disabled'}`);
-  console.log(`\n🧪 Try these toy examples:`);
-  console.log(`   GET  http://localhost:${PORT}/api/examples`);
-  console.log(`   GET  http://localhost:${PORT}/api/functions`);
-  console.log(`   POST http://localhost:${PORT}/api/functions/getSlideInfo/execute`);
-  console.log(`   POST http://localhost:${PORT}/api/chat`);
-});
+
+async function startServer() {
+  await initializeServer();
+  
+  app.listen(PORT, () => {
+    console.log(`🚀 Enhanced SlidChat server running on port ${PORT}`);
+    console.log(`📊 Functions registered: 4`);
+    console.log(`🤖 LangChain agent: ${global.langchainAgent ? 'enabled' : 'disabled'}`);
+    console.log(`\n🧪 Try these toy examples:`);
+    console.log(`   GET  http://localhost:${PORT}/api/examples`);
+    console.log(`   GET  http://localhost:${PORT}/api/functions`);
+    console.log(`   POST http://localhost:${PORT}/api/functions/getSlideInfo/execute`);
+    console.log(`   POST http://localhost:${PORT}/api/chat`);
+  });
+}
+
+startServer();

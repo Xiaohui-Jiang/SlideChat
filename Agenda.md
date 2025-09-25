@@ -88,7 +88,12 @@ Assumed data json file:
 - [x] Ensure that the function structure is maintained properly for future extension.
 - [x] Implement LangChain integration with OpenAI GPT for biological slide analysis
 - [x] Create extensible function registry system with 4 analysis functions
-- [x] Build comprehensive testing suite and demo scripts  
+- [x] Build comprehensive testing suite and demo scripts
+- [x] Fix LangChain schema validation issues and OpenAI function calling integration
+- [x] Refactor from manual schema conversion to LangChain's tool() wrapper system
+- [x] Implement proper snake_case parameter naming for OpenAI API compatibility
+- [x] Complete server architecture update with direct LangChain tool integration
+
 
 ### Xiaohui  
 - [ ] Develop a preprocessing workflow compatible with various downstream tasks.  
@@ -127,4 +132,5 @@ Assumed data json file:
 - Add error handling for analyze failures
 - Test with real .svs files and Xenium data integration
 - Complete LangChain server integration (update index.js with new routes)
-- Test end-to-end LangChain functionality with frontend components  
+- Test end-to-end LangChain functionality with frontend components
+- **Implement chat memory persistence**: Add conversation history storage to maintain context during chat sessions (currently lost when server restarts)  
