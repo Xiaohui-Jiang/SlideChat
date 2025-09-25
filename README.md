@@ -10,6 +10,7 @@ A modern web application for viewing and discussing medical slides (WSI files) w
 - **🎯 ROI Selection**: Draw regions of interest on slides for focused analysis
 - **📱 Responsive Design**: Modern UI built with Tailwind CSS
 - **⚡ Real-time Updates**: Live file processing and chat updates
+- **🤖 LangChain Integration**: AI-powered biological analysis functions (experimental)
 
 ## 🏗️ Architecture
 
@@ -19,12 +20,16 @@ A modern web application for viewing and discussing medical slides (WSI files) w
 - **Build Tool**: Vite 7
 - **Styling**: Tailwind CSS 3
 - **Image Viewer**: OpenSeaDragon for high-resolution slides
+- **LangChain Integration**: TypeScript API client for AI functions
 
 ### Backend (Node.js + Express)
-- **Port**: 5050 (configurable)
+- **Port**: 3001 (LangChain enhanced server)
 - **Framework**: Express.js 5
 - **File Processing**: Multer for uploads, planned OpenSlide integration
 - **Static Serving**: Public slides directory
+- **LangChain Stack**: @langchain/core, @langchain/openai, langchain packages
+- **AI Integration**: OpenAI GPT for intelligent function orchestration
+- **Schema Validation**: Zod library for type-safe input/output validation
 
 ## 📁 Project Structure
 
@@ -61,11 +66,18 @@ slidechat/
 │     │  └─ appState.ts         # slide/ROI/run state (Zustand/Redux)
 │     └─ types.ts               # shared client types
 │
-└─ server/                       # Express (Node 20)
+└─ server/                       # Express (Node 20) + LangChain
    ├─ package.json
-   ├─ index.js                   # app bootstrap, CORS, /api/health, /public
+   ├─ index.js                   # Enhanced server with LangChain integration
+   ├─ .env.example               # Environment configuration template
+   ├─ lib/
+   │  ├─ function-registry.js    # Extensible function system with Zod validation
+   │  ├─ slide-functions.js      # Biological analysis functions
+   │  └─ langchain-integration.js # LangChain agent setup with OpenAI
+   ├─ test-functions.js          # Function testing script
+   ├─ test-server.js             # HTTP API testing script
    ├─ config/
-   │  └─ env.js                  # reads PORT, UPLOAD_DIR, PUBLIC_DIR, CORS
+   │  └─ env.js                  # reads PORT, UPLOAD_DIR, PUBLIC_DIR, CORS, OPENAI_API_KEY
    ├─ routes/
    │  ├─ slides.js               # POST /slides, GET /slides/:id, list
    │  ├─ rois.js                 # POST/PATCH/DELETE /slides/:id/rois/:roiId
@@ -123,19 +135,19 @@ slidechat/
 1. **Start the backend server** (in one terminal):
    ```bash
    cd server
-   npm run dev
+   npm start
    ```
-   Server will start on `http://localhost:5050`
+   Server will start on `http://localhost:3001`
 
 2. **Start the frontend** (in another terminal):
    ```bash
    cd client
    npm run dev
    ```
-   Frontend will start on `http://localhost:3000`
+   Frontend will start on `http://localhost:5173`
 
 3. **Access the application**
-   Open your browser to `http://localhost:3000`
+   Open your browser to `http://localhost:5173`
 
 ### Production Build
 
@@ -153,58 +165,76 @@ slidechat/
 ## 🔧 Configuration
 
 ### Backend Configuration
-The server can be configured via environment variables:
+Create `server/.env` file for configuration:
 
 ```bash
-PORT=5050  # Server port (default: 5050)
+# Optional: OpenAI API Key for full LangChain functionality
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Server configuration
+PORT=3001                    # Server port (default: 3001 for LangChain integration)
+NODE_ENV=development
+
+# File paths
+UPLOAD_DIR=./uploads
+PUBLIC_DIR=./public
+
+# CORS
+CORS_ORIGIN=http://localhost:5173
 ```
+
+**Note**: The system works without an OpenAI API key using mock responses and fallback functionality.
 
 ### Frontend Configuration
 The Vite configuration handles:
-- **Proxy**: API calls to backend (`/api/*` → `http://localhost:5050`)
-- **Port**: Development server port (3000)
+- **Proxy**: API calls to backend (`/api/*` → `http://localhost:3001`)
+- **Port**: Development server port (5173)
 - **Build**: Production optimizations
 
 ## 📡 API Endpoints
 
-### Upload Slide
+### LangChain Integration Endpoints
 ```http
+# List available functions
+GET /api/functions
+
+# Execute specific function
+POST /api/functions/:name/execute
+Content-Type: application/json
+{
+  "input": {
+    "slideId": "lung_01",
+    "analysisType": "morphology"
+  }
+}
+
+# Chat with LangChain agent
+POST /api/chat
+Content-Type: application/json
+{
+  "message": "Get information about slide lung_01",
+  "context": {}
+}
+
+# Get usage examples
+GET /api/examples
+
+# Health check
+GET /api/health
+```
+
+### Legacy Slide Management Endpoints
+```http
+# Upload Slide
 POST /api/upload
 Content-Type: multipart/form-data
 
-# Response
-{
-  "id": "slide_123",
-  "name": "lung_sample.svs", 
-  "imageUrl": "/public/slides/slide_123/preview.jpg",
-  "thumbnailUrl": "/public/slides/slide_123/thumb.jpg"
-}
-```
-
-### Get Slides
-```http
+# Get Slides
 GET /api/slides
 
-# Response
-[
-  {
-    "id": "slide_123",
-    "name": "lung_sample.svs",
-    "imageUrl": "/public/slides/slide_123/preview.jpg", 
-    "thumbnailUrl": "/public/slides/slide_123/thumb.jpg",
-    "sourceType": "uploaded"
-  }
-]
-```
-
-### Health Check
-```http
-GET /api/health
-
-# Response
-{
-  "status": "Server is running!"
-}
+# ROI Management
+POST /api/roi
+GET /api/roi/:slideId
 ```
 
 ## 🎨 UI Components
@@ -230,28 +260,111 @@ GET /api/health
 3. **Chat**: User input → ChatPanel → API → Response handling
 4. **State Management**: App.tsx coordinates all component state
 
+## 🧪 Available LangChain Functions
+
+### 1. getSlideInfo
+Get comprehensive information about a slide including metadata, dimensions, and analysis results.
+- **Input**: `{ slideId: string }`
+- **Output**: Slide metadata, dimensions, staining info, and analysis results
+
+### 2. createROI
+Create a new Region of Interest (ROI) on a slide with specified geometry.
+- **Input**: `{ slideId: string, name: string, geometry: { x, y, w, h } }`
+- **Output**: Created ROI with ID, coordinates, and metadata
+
+### 3. analyzeBiologicalFeatures
+Analyze biological features in a slide or ROI using various analysis types.
+- **Input**: `{ slideId: string, analysisType: 'morphology'|'staining'|'cellular', roiId?: string }`
+- **Output**: Detailed analysis results with metrics and insights
+
+### 4. findSimilarSlides
+Find slides similar to a given slide based on morphology, staining, or cellular patterns.
+- **Input**: `{ slideId: string, similarityType: 'morphology'|'staining'|'cellular', threshold: number }`
+- **Output**: List of similar slides with similarity scores
+
+## 🧪 Testing LangChain Integration
+
+### Test Individual Functions
+```bash
+cd server
+node test-functions.js
+```
+
+### Test HTTP API
+```bash
+cd server
+node test-server.js
+```
+
+### Run Demo Script
+```bash
+# Make executable
+chmod +x demo-langchain-en.sh
+
+# Run demo
+./demo-langchain-en.sh
+```
+
+### Usage Examples
+
+#### Natural Language Queries
+```javascript
+// Simple information query
+"Get information about slide lung_01"
+
+// Create ROI with analysis
+"Create a ROI named tumor_region in slide lung_01 at coordinates x:150, y:250 with size 400x300, then analyze its biological features"
+
+// Find similar slides
+"Find slides similar to lung_01 based on morphological features with similarity above 80%"
+```
+
+#### Direct Function Calls
+```javascript
+import { langchainApi } from './lib/langchain-api';
+
+// Get slide information
+const slideInfo = await langchainApi.executeFunction('getSlideInfo', {
+  slideId: 'lung_01'
+});
+
+// Create ROI
+const roi = await langchainApi.executeFunction('createROI', {
+  slideId: 'lung_01',
+  name: 'tumor_region',
+  geometry: { x: 100, y: 200, w: 300, h: 250 }
+});
+```
+
 ## 🚧 Planned Features
 
 - **OpenSlide Integration**: Native .svs file processing
-- **AI Chat**: Integration with medical AI for slide analysis
+- **Enhanced AI Chat**: Advanced medical AI analysis with LangChain
 - **Collaboration**: Multi-user slide discussion
 - **Annotations**: Persistent ROI and note saving
 - **Export**: Slide analysis and chat export functionality
+- **Custom Function Registry**: User-defined analysis functions
 
 ## 🐛 Troubleshooting
 
 ### Port Conflicts
 If you get port errors:
 ```bash
-# Kill processes on port 3000
-lsof -ti:3000 | xargs kill -9
+# Kill processes on port 5173 (frontend)
+lsof -ti:5173 | xargs kill -9
 
-# Kill processes on port 5050  
-lsof -ti:5050 | xargs kill -9
+# Kill processes on port 3001 (backend)
+lsof -ti:3001 | xargs kill -9
 ```
 
+### LangChain API Issues
+- Check if OpenAI API key is set (optional, fallback mode available)
+- Verify server is running on port 3001
+- Test with basic functions first: `node test-functions.js`
+- Run demo script to verify full functionality
+
 ### API Connection Issues
-- Ensure backend is running on port 5050
+- Ensure backend is running on port 3001
 - Check Vite proxy configuration in `vite.config.ts`
 - Verify CORS settings in server
 
@@ -271,8 +384,39 @@ lsof -ti:5050 | xargs kill -9
 
 This project is licensed under the ISC License.
 
+## 🤝 Contributing
+
+### Adding New LangChain Functions
+1. Define function in `server/lib/slide-functions.js`
+2. Add Zod schema for validation
+3. Register function with the registry
+4. Test with `test-functions.js`
+
+### Function Template
+```javascript
+const newFunction = {
+  name: 'newFunction',
+  description: 'Description of what this function does',
+  tags: ['analysis', 'slides'],
+  inputSchema: z.object({
+    slideId: z.string(),
+    // other parameters
+  }),
+  outputSchema: z.object({
+    // expected output structure
+  }),
+  implementation: async (input) => {
+    // function logic here
+    return result;
+  }
+};
+```
+
 ## 🙏 Acknowledgments
 
+- **LangChain** - Framework for developing applications with language models
+- **OpenAI** - GPT models for intelligent function orchestration
+- **Zod** - TypeScript-first schema validation library
 - **OpenSeaDragon** - High-performance web-based image viewer
 - **Tailwind CSS** - Utility-first CSS framework  
 - **Vite** - Fast build tool and development server
@@ -280,4 +424,4 @@ This project is licensed under the ISC License.
 
 ---
 
-Built with ❤️ for medical slide analysis and collaboration.
+Built with ❤️ for medical slide analysis and AI-powered collaboration.

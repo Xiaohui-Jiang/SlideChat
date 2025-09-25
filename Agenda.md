@@ -84,8 +84,11 @@ Assumed data json file:
 - [ ] Add server-side logging for better request tracing  
 
 ### Jiacheng  
-- [ ] Check how to call APIs using LangChain or similar methods to execute existing functions, and provide a toy example.  
-- [ ] Ensure that the function structure is maintained properly for future extension.  
+- [x] Check how to call APIs using LangChain or similar methods to execute existing functions, and provide a toy example.
+- [x] Ensure that the function structure is maintained properly for future extension.
+- [x] Implement LangChain integration with OpenAI GPT for biological slide analysis
+- [x] Create extensible function registry system with 4 analysis functions
+- [x] Build comprehensive testing suite and demo scripts  
 
 ### Xiaohui  
 - [ ] Develop a preprocessing workflow compatible with various downstream tasks.  
@@ -100,11 +103,17 @@ Assumed data json file:
 - ✅ Debugged analyze button functionality - root cause: ROI selection workflow
 - ✅ Added comprehensive debugging with step-by-step console logging
 - ✅ Fixed API file corruption issues and TypeScript compilation errors
+- ✅ **LangChain Integration Complete**: Implemented AI-powered biological analysis system
+  - Function registry with 4 analysis functions (getSlideInfo, createROI, analyzeBiologicalFeatures, findSimilarSlides)
+  - OpenAI GPT integration with fallback system for operation without API keys
+  - Comprehensive testing suite with demo scripts
+  - TypeScript frontend API client and testing UI component
 
 **Technical Issues Resolved:**
 - ROI analyze button required pre-selection, now auto-selects ROI on analyze
 - Frontend-backend API communication flow now properly traced with debugging
 - Server running on port 5050, client on port 3000 with proper proxy configuration
+- LangChain dependencies installed and core system files restored after rollback
 
 
 **Poentail Issue:**
@@ -116,4 +125,6 @@ Assumed data json file:
 - Verify complete analyze workflow from ROI creation to server response
 - Implement actual pathology analysis logic (CD68 cell density, immune patterns)
 - Add error handling for analyze failures
-- Test with real .svs files and Xenium data integration  
+- Test with real .svs files and Xenium data integration
+- Complete LangChain server integration (update index.js with new routes)
+- Test end-to-end LangChain functionality with frontend components  

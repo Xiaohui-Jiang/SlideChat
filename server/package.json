@@ -13,10 +13,15 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@langchain/core": "^0.3.77",
+    "@langchain/openai": "^0.6.13",
     "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "jimp": "^1.6.0",
-    "multer": "^2.0.2"
+    "langchain": "^0.3.34",
+    "multer": "^2.0.2",
+    "zod": "^4.1.11"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
