@@ -1,3 +1,18 @@
+## 10.3-10.10
+
+### Tianhao
+
+1. ROI selection change with zoom in/out
+2. New Interface
+
+### Jiacheng
+
+1. LangChain / LlamaIndex: 
+
+### Xiaohui
+
+1. Call backend functions multiple times 
+
 ## 09/19/2025 - 09/26/2025
 
 ### General  
