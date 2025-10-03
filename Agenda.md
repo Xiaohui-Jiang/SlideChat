@@ -96,7 +96,7 @@ Assumed data json file:
 
 
 ### Xiaohui  
-- [ ] Develop a preprocessing workflow compatible with various downstream tasks.  
+- [x] Develop a preprocessing workflow compatible with various downstream tasks.  
 - [ ] Check how to enable user-participatory programming for backend data analysis, and provide an example.
 
 ### Recent Progress (September 24, 2025)
