@@ -4,7 +4,7 @@ const querystring = require('querystring');
 const { execSync } = require('child_process');
 
 class ServerTester {
-  constructor(host = 'localhost', port = 3001) {
+  constructor(host = 'localhost', port = 3000) {
     this.host = host;
     this.port = port;
     this.baseUrl = `http://${host}:${port}`;

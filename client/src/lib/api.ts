@@ -18,11 +18,19 @@ export async function fetchSlides(): Promise<Slide[]> {
     { method: 'GET' },
     () => [
       {
-        id: 'lung_01',
-        name: 'lung_01.svs',
-        imageUrl: 'https://picsum.photos/seed/lung/1600/1200',
-        thumbnailUrl: 'https://picsum.photos/seed/lung/240/180',
-        sourceType: 'uploaded',
+        id: 'demo_he_tissue111111',
+        name: 'demo_he_tissue11111.jpg',
+        imageUrl: 'http://localhost:5050/public/slides/demo_he_tissue/demopic.jpg',
+        thumbnailUrl: 'http://localhost:5050/public/slides/demo_he_tissue/demopic.jpg',
+        sourceType: 'demo',
+        format: '.jpg',
+        metadata: {
+          isBiologicalImage: true,
+          tissueType: 'intestinal',
+          staining: 'H&E',
+          magnification: '20x',
+          description: 'High-quality H&E stained tissue showing glandular structures and stromal components'
+        }
       },
     ]
   );
@@ -97,4 +105,51 @@ export async function deleteROI(slideId: string, roiId: string): Promise<void> {
     method: 'DELETE'
   });
   if (!res.ok) throw new Error(`Delete ROI failed: ${res.status}`);
+}
+
+// Image-based ROI API functions (new structure)
+export async function fetchImageROIs(imageId: string): Promise<ROI[]> {
+  return safeFetch<ROI[]>(
+    `${API}/images/${imageId}/rois`,
+    { method: 'GET' },
+    () => []
+  );
+}
+
+export async function createImageROI(imageId: string, name: string, geometry: Rect): Promise<ROI> {
+  const res = await fetch(`${API}/images/${imageId}/rois`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, geometry })
+  });
+  if (!res.ok) throw new Error(`Create ROI failed: ${res.status}`);
+  return (await res.json()) as ROI;
+}
+
+// Biological image specific API functions
+export async function getImageMetadata(imageId: string) {
+  return safeFetch(
+    `${API}/images/${imageId}/metadata`,
+    { method: 'GET' },
+    () => ({})
+  );
+}
+
+export async function getProcessingStatus(imageId: string) {
+  return safeFetch(
+    `${API}/images/${imageId}/processing-status`,
+    { method: 'GET' },
+    () => ({ status: 'unknown', progress: 0 })
+  );
+}
+
+export async function getSupportedFormats() {
+  return safeFetch(
+    `${API}/supported-formats`,
+    { method: 'GET' },
+    () => ({
+      biologicalFormats: [],
+      standardFormats: []
+    })
+  );
 }
