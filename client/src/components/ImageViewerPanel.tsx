@@ -102,10 +102,20 @@ export const ImageViewerPanel: React.FC<ImageViewerPanelProps> = ({
   const saveROI = () => {
     if (!currentDrawing || !selectedImage) return;
     
+    // Convert screen coordinates to image coordinates
+    // Reverse the transform: screen_coord = offset + image_coord * scale
+    // So: image_coord = (screen_coord - offset) / scale
+    const imageGeometry = {
+      x: (currentDrawing.x - offset.x) / scale,
+      y: (currentDrawing.y - offset.y) / scale,
+      w: currentDrawing.w / scale,
+      h: currentDrawing.h / scale,
+    };
+    
     onROICreate({
       name: roiName,
       imageId: selectedImage.id,
-      geometry: currentDrawing
+      geometry: imageGeometry
     });
 
     setCurrentDrawing(null);

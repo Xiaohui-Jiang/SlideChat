@@ -99,7 +99,17 @@ export default function SlideViewer({ slides, selectedId, onSelect, onAnalyzeROI
     if (!currentDrawing || !selected) return;
     
     try {
-      const newROI = await createROI(selected.id, roiName, currentDrawing);
+      // Convert screen coordinates to image coordinates
+      // Reverse the transform: screen_coord = offset + image_coord * scale
+      // So: image_coord = (screen_coord - offset) / scale
+      const imageGeometry = {
+        x: (currentDrawing.x - offset.x) / scale,
+        y: (currentDrawing.y - offset.y) / scale,
+        w: currentDrawing.w / scale,
+        h: currentDrawing.h / scale,
+      };
+      
+      const newROI = await createROI(selected.id, roiName, imageGeometry);
       setRois(prev => [...prev, newROI]);
       setCurrentDrawing(null);
       setShowNameDialog(false);
@@ -204,10 +214,10 @@ export default function SlideViewer({ slides, selectedId, onSelect, onAnalyzeROI
                   selectedROI?.id === roi.id ? 'border-red-500 bg-red-100/20' : 'border-green-500 bg-green-100/20'
                 }`}
                 style={{ 
-                  left: roi.geometry.x, 
-                  top: roi.geometry.y, 
-                  width: roi.geometry.w, 
-                  height: roi.geometry.h 
+                  left: offset.x + roi.geometry.x * scale, 
+                  top: offset.y + roi.geometry.y * scale, 
+                  width: roi.geometry.w * scale, 
+                  height: roi.geometry.h * scale 
                 }}
                 onClick={() => setSelectedROI(selectedROI?.id === roi.id ? null : roi)}
                 title={roi.name}
