@@ -1,0 +1,23 @@
+{
+  "id": "609fe2a8-8053-4615-a672-9cc77170996f",
+  "userId": "user",
+  "metadata": {},
+  "createdAt": 1760042087696,
+  "updatedAt": 1760042087697,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "becca1cf-d3af-4644-a18c-a7c75c85c1bd",
+      "role": "user",
+      "content": "111",
+      "name": null,
+      "metadata": {
+        "timestamp": 1760042087684
+      },
+      "createdAt": 1760042087697,
+      "tokenEstimate": 1
+    }
+  ]
+}

@@ -207,6 +207,40 @@ GET /api/health
 }
 ```
 
+## 💬 Conversational AI Features
+
+SlideChat includes an intelligent conversational system powered by LangChain that maintains context across chat sessions for natural, multi-turn biological slide analysis discussions.
+
+### Key Features
+- **🧠 Persistent Memory**: Conversations stored with full context retention
+- **🔬 Biological Analysis Tools**: Integrated slide analysis functions (morphology, ROI creation, feature analysis)
+- **📝 Auto-Summarization**: Long conversations automatically summarized to maintain context
+- **🔄 Context Awareness**: Agent remembers previous slides, ROIs, and analysis requests
+
+### Chat API
+```http
+POST /api/chat
+Content-Type: application/json
+
+{
+  "message": "Analyze morphology in slide demo_he_tissue111111",
+  "conversationId": "uuid-optional",
+  "userId": "pathologist_1"
+}
+```
+
+**Response includes:**
+- Conversational reply with biological insights
+- Functions used (getSlideInfo, analyzeBiologicalFeatures, etc.)
+- Conversation ID for follow-up requests
+- Context summary for long conversations
+
+### Conversation Management
+```http
+GET /api/conversations              # List all conversations
+GET /api/conversations/{id}         # Get specific conversation history
+```
+
 ## 🎨 UI Components
 
 ### SlideViewer

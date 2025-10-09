@@ -1,0 +1,21 @@
+{
+  "id": "2c6f6aab-8248-4d76-a4d8-1428ab97e09b",
+  "userId": "anonymous",
+  "metadata": {},
+  "createdAt": 1760040732203,
+  "updatedAt": 1760040732204,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "38f8feaa-e745-4727-9daa-333a6227f50f",
+      "role": "user",
+      "content": "tell me what is tianhao",
+      "name": null,
+      "metadata": {},
+      "createdAt": 1760040732204,
+      "tokenEstimate": 6
+    }
+  ]
+}

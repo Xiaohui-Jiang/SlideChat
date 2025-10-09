@@ -45,7 +45,7 @@ export const FunctionTester: React.FC<FunctionTesterProps> = ({ className = '' }
   const executeFunction = async (functionName: string) => {
     setLoading(true);
     setError('');
-    
+
     try {
       const result: FunctionExecutionResult = await langchainApi.testFunction(functionName);
       setResults(prev => ({
@@ -61,10 +61,10 @@ export const FunctionTester: React.FC<FunctionTesterProps> = ({ className = '' }
 
   const sendChatMessage = async () => {
     if (!chatMessage.trim()) return;
-    
+
     setLoading(true);
     setError('');
-    
+
     try {
       const response = await langchainApi.chat(chatMessage);
       setChatResponse(response.reply);
@@ -78,7 +78,7 @@ export const FunctionTester: React.FC<FunctionTesterProps> = ({ className = '' }
   return (
     <div className={`p-6 bg-white rounded-lg shadow-lg ${className}`}>
       <h2 className="text-2xl font-bold text-gray-800 mb-6">LangChain Function Tester</h2>
-      
+
       {error && (
         <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
           {error}
@@ -105,7 +105,7 @@ export const FunctionTester: React.FC<FunctionTesterProps> = ({ className = '' }
             Send
           </button>
         </div>
-        
+
         {chatResponse && (
           <div className="p-3 bg-gray-50 border rounded-md">
             <p className="text-sm text-gray-600 mb-1">Response:</p>
@@ -130,9 +130,9 @@ export const FunctionTester: React.FC<FunctionTesterProps> = ({ className = '' }
                   Test
                 </button>
               </div>
-              
+
               <p className="text-sm text-gray-600 mb-2">{func.description}</p>
-              
+
               {func.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-2">
                   {func.tags.map((tag) => (
@@ -174,10 +174,10 @@ export const FunctionTester: React.FC<FunctionTesterProps> = ({ className = '' }
                     Use Query
                   </button>
                 </div>
-                
+
                 <p className="text-sm text-gray-800 mb-2 font-medium">{example.query}</p>
                 <p className="text-xs text-gray-600 mb-2">{example.description}</p>
-                
+
                 <div className="flex flex-wrap gap-1">
                   <span className="text-xs text-gray-500">Expected functions:</span>
                   {example.expected_functions.map((funcName) => (

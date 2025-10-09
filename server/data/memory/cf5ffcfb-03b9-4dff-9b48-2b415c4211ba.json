@@ -1,0 +1,21 @@
+{
+  "id": "cf5ffcfb-03b9-4dff-9b48-2b415c4211ba",
+  "userId": "test-user",
+  "metadata": {},
+  "createdAt": 1760043601545,
+  "updatedAt": 1760043601545,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "0b9d20cb-0099-49d4-b0af-979ba2ebbfac",
+      "role": "user",
+      "content": "Hello, can you help me analyze biological slides?",
+      "name": null,
+      "metadata": {},
+      "createdAt": 1760043601545,
+      "tokenEstimate": 13
+    }
+  ]
+}

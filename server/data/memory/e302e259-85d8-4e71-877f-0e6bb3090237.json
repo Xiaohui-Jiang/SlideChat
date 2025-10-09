@@ -1,0 +1,21 @@
+{
+  "id": "e302e259-85d8-4e71-877f-0e6bb3090237",
+  "userId": "anonymous",
+  "metadata": {},
+  "createdAt": 1760041908745,
+  "updatedAt": 1760041908745,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "a96f853b-6400-4496-a615-e0270c96540c",
+      "role": "user",
+      "content": "hello",
+      "name": null,
+      "metadata": {},
+      "createdAt": 1760041908745,
+      "tokenEstimate": 2
+    }
+  ]
+}

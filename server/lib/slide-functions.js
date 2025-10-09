@@ -30,7 +30,7 @@ const FindSimilarSlidesSchema = z.object({
 // Mock implementation functions (keeping original logic)
 async function getSlideInfo({ slideId }) {
   await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 200));
-  
+
   return {
     slideId,
     name: `Slide ${slideId}`,
@@ -50,9 +50,9 @@ async function getSlideInfo({ slideId }) {
 
 async function createROI({ slideId, name, geometry }) {
   await new Promise(resolve => setTimeout(resolve, 150 + Math.random() * 100));
-  
+
   const roiId = `roi_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
+
   return {
     roiId,
     slideId,
@@ -66,7 +66,7 @@ async function createROI({ slideId, name, geometry }) {
 
 async function analyzeBiologicalFeatures({ slideId, roiId, analysisType, parameters }) {
   await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 500));
-  
+
   const baseResults = {
     slideId,
     roiId: roiId || 'full_slide',
@@ -85,7 +85,7 @@ async function analyzeBiologicalFeatures({ slideId, roiId, analysisType, paramet
           tissueIntegrity: ['excellent', 'good', 'fair'][Math.floor(Math.random() * 3)]
         }
       };
-    
+
     case 'immunostaining':
       return {
         ...baseResults,
@@ -96,7 +96,7 @@ async function analyzeBiologicalFeatures({ slideId, roiId, analysisType, paramet
           backgroundStaining: 'minimal'
         }
       };
-    
+
     case 'cellular_density':
       return {
         ...baseResults,
@@ -107,7 +107,7 @@ async function analyzeBiologicalFeatures({ slideId, roiId, analysisType, paramet
           distribution: 'heterogeneous'
         }
       };
-    
+
     default:
       return {
         ...baseResults,
@@ -122,11 +122,11 @@ async function analyzeBiologicalFeatures({ slideId, roiId, analysisType, paramet
 
 async function findSimilarSlides({ slideId, similarityType, threshold = '0.8', maxResults = '5' }) {
   await new Promise(resolve => setTimeout(resolve, 200 + Math.random() * 300));
-  
+
   const similarSlides = [];
   const maxResultsNum = parseInt(maxResults);
   const thresholdNum = parseFloat(threshold);
-  
+
   for (let i = 0; i < Math.min(maxResultsNum, 3 + Math.floor(Math.random() * 3)); i++) {
     const similarity = thresholdNum + Math.random() * (1 - thresholdNum);
     similarSlides.push({
@@ -137,7 +137,7 @@ async function findSimilarSlides({ slideId, similarityType, threshold = '0.8', m
       matchedFeatures: ['morphology', 'texture', 'color'][Math.floor(Math.random() * 3)]
     });
   }
-  
+
   return {
     referenceSlide: slideId,
     similarityType,
@@ -174,11 +174,11 @@ export const createROITool = tool(
 
 export const analyzeBiologicalFeaturesTool = tool(
   async ({ slide_id, roi_id, analysis_type, parameters }) => {
-    const result = await analyzeBiologicalFeatures({ 
-      slideId: slide_id, 
-      roiId: roi_id, 
-      analysisType: analysis_type, 
-      parameters 
+    const result = await analyzeBiologicalFeatures({
+      slideId: slide_id,
+      roiId: roi_id,
+      analysisType: analysis_type,
+      parameters
     });
     return JSON.stringify(result);
   },
@@ -191,11 +191,11 @@ export const analyzeBiologicalFeaturesTool = tool(
 
 export const findSimilarSlidesTool = tool(
   async ({ slide_id, similarity_type, threshold, max_results }) => {
-    const result = await findSimilarSlides({ 
-      slideId: slide_id, 
-      similarityType: similarity_type, 
-      threshold, 
-      maxResults: max_results 
+    const result = await findSimilarSlides({
+      slideId: slide_id,
+      similarityType: similarity_type,
+      threshold,
+      maxResults: max_results
     });
     return JSON.stringify(result);
   },

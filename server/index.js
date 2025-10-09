@@ -8,15 +8,17 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 
 // Import LangChain tools
-import { 
-  getSlideInfoTool, 
-  createROITool, 
-  analyzeBiologicalFeaturesTool, 
-  findSimilarSlidesTool 
+import {
+  getSlideInfoTool,
+  createROITool,
+  analyzeBiologicalFeaturesTool,
+  findSimilarSlidesTool
 } from './lib/slide-functions.js';
 import { ChatOpenAI } from '@langchain/openai';
 import { createToolCallingAgent, AgentExecutor } from 'langchain/agents';
-import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { ChatPromptTemplate, MessagesPlaceholder } from '@langchain/core/prompts';
+import { HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages';
+import ConversationMemoryStore from './lib/conversation-memory.js';
 
 // Load environment variables
 dotenv.config();
@@ -28,16 +30,58 @@ app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
 const upload = multer({ dest: path.join(process.cwd(), 'uploads') });
 
+const SUMMARY_MODEL =
+  process.env.OPENAI_SUMMARY_MODEL ||
+  process.env.LANGCHAIN_MODEL ||
+  process.env.OPENAI_MODEL ||
+  'gpt-4o-mini';
+let summaryLLM = null;
+let summarizerPrompt = null;
+
+try {
+  summaryLLM = new ChatOpenAI({
+    model: SUMMARY_MODEL,
+    temperature: 0.2
+  });
+
+  summarizerPrompt = ChatPromptTemplate.fromMessages([
+    [
+      'system',
+      'You maintain concise running summaries of user conversations for a biological slide analysis assistant. Focus on factual context, outstanding questions, user preferences, and analysis steps that may matter later. Keep summaries under 200 words.'
+    ],
+    [
+      'human',
+      'Previous summary (use "None" if empty):\n{existingSummary}\n\nNew conversation turns:\n{transcript}\n\nUpdate the running summary in prose. Highlight slide IDs, ROI names, requested analyses, and any promised follow-ups.'
+    ]
+  ]);
+} catch (error) {
+  console.warn('⚠️ Conversation summarizer disabled:', error.message);
+}
+
+const conversationMemory = new ConversationMemoryStore({
+  summarizer: null, // Disable summarizer to avoid crashes during testing
+  config: {
+    maxContextTokens: 3200,
+    maxRecentMessages: 14,
+    summaryTriggerMessages: 14,
+    summaryRetainRecentMessages: 6
+  }
+});
+
+global.conversationMemory = conversationMemory;
+
 // Initialize function registry and LangChain agent
 async function initializeServer() {
   try {
     // Initialize LangChain tools and agent
     const tools = [
       getSlideInfoTool,
-      createROITool, 
+      createROITool,
       analyzeBiologicalFeaturesTool,
       findSimilarSlidesTool
     ];
+
+    global.langchainTools = tools;
 
     console.log('✅ Loaded LangChain tool: getSlideInfo');
     console.log('✅ Loaded LangChain tool: createROI');
@@ -45,9 +89,16 @@ async function initializeServer() {
     console.log('✅ Loaded LangChain tool: findSimilarSlides');
 
     // Create the LangChain agent
+    const modelName = process.env.LANGCHAIN_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+    const temperature = process.env.LANGCHAIN_TEMPERATURE
+      ? Number(process.env.LANGCHAIN_TEMPERATURE)
+      : 0;
+
+    console.log(`🧠 Initializing LangChain agent with model: ${modelName} (temperature=${temperature})`);
+
     const llm = new ChatOpenAI({
-      model: "gpt-3.5-turbo",
-      temperature: 0,
+      model: modelName,
+      temperature,
     });
 
     const prompt = ChatPromptTemplate.fromMessages([
@@ -63,13 +114,14 @@ When a user asks about slide analysis, ROI creation, or biological features, use
 Always provide clear, helpful responses and explain what functions you're using.
 
 If you need to analyze multiple aspects or perform complex workflows, you can call multiple functions in sequence.`],
+      new MessagesPlaceholder('chat_history'),
       ["human", "{input}"],
       ["placeholder", "{agent_scratchpad}"],
     ]);
 
     const agent = await createToolCallingAgent({ llm, tools, prompt });
     global.langchainAgent = new AgentExecutor({ agent, tools });
-    
+
     console.log('🤖 LangChain agent initialized successfully');
 
   } catch (error) {
@@ -90,30 +142,30 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     const fileExt = path.extname(file.originalname).toLowerCase();
     const isStandardImage = (file.mimetype || '').startsWith('image/');
     const isBiologicalFormat = ['.svs', '.tif', '.tiff', '.ndpi', '.vsi', '.scn'].includes(fileExt);
-    
+
     const outDir = path.join(process.cwd(), 'public', 'slides', id);
     fs.mkdirSync(outDir, { recursive: true });
 
     let imageUrl, thumbnailUrl, metadata = {};
-    
+
     if (isStandardImage) {
       // Handle standard image formats (PNG, JPG, etc.)
       const dest = path.join(outDir, file.originalname);
       fs.renameSync(file.path, dest);
       imageUrl = `/public/slides/${id}/${file.originalname}`;
       thumbnailUrl = imageUrl;
-      
+
       console.log(`📷 Standard image uploaded: ${file.originalname}`);
     } else if (isBiologicalFormat) {
       // Handle biological image formats (SVS, TIF, etc.)
       const dest = path.join(outDir, file.originalname);
       fs.renameSync(file.path, dest);
-      
+
       // For now, create a placeholder preview
       // In production, you'd use tools like OpenSlide, VIPS, or similar
       imageUrl = `/public/slides/${id}/${file.originalname}`;
       thumbnailUrl = `https://picsum.photos/seed/${id}/240/180`;
-      
+
       // Extract basic metadata
       const stats = fs.statSync(dest);
       metadata = {
@@ -123,14 +175,14 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         isBiologicalImage: true,
         needsProcessing: true
       };
-      
+
       console.log(`🔬 Biological image uploaded: ${file.originalname} (${fileExt})`);
       console.log(`📊 File size: ${(stats.size / (1024 * 1024)).toFixed(2)} MB`);
     } else {
       // Unsupported format
       fs.unlinkSync(file.path);
-      return res.status(400).json({ 
-        error: `Unsupported file format: ${fileExt}. Supported formats: JPG, PNG, TIF, SVS, NDPI, VSI, SCN` 
+      return res.status(400).json({
+        error: `Unsupported file format: ${fileExt}. Supported formats: JPG, PNG, TIF, SVS, NDPI, VSI, SCN`
       });
     }
 
@@ -217,7 +269,7 @@ app.get('/api/slides', (req, res) => {
 // Biological image metadata endpoint
 app.get('/api/images/:imageId/metadata', (req, res) => {
   const { imageId } = req.params;
-  
+
   // In a real implementation, this would read metadata from the actual file
   const mockMetadata = {
     id: imageId,
@@ -233,14 +285,14 @@ app.get('/api/images/:imageId/metadata', (req, res) => {
     fileSize: '2.3 GB',
     pyramidLevels: 6
   };
-  
+
   res.json(mockMetadata);
 });
 
 // Biological image processing status
 app.get('/api/images/:imageId/processing-status', (req, res) => {
   const { imageId } = req.params;
-  
+
   // Mock processing status
   res.json({
     id: imageId,
@@ -369,119 +421,243 @@ app.delete('/api/slides/:slideId/rois/:roiId', (req, res) => {
   res.json({ success: true });
 });
 
-// Enhanced chat endpoint with direct LangChain tool integration
+// Conversation memory inspection endpoints
+app.get('/api/conversations', (req, res) => {
+  res.json({
+    conversations: conversationMemory.listConversations()
+  });
+});
+
+app.get('/api/conversations/:conversationId', (req, res) => {
+  const { conversationId } = req.params;
+  const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+  const conversation = conversationMemory.getConversation(conversationId);
+
+  if (!conversation) {
+    return res.status(404).json({ error: 'Conversation not found' });
+  }
+
+  const messages = conversation.messages.slice(-limit);
+
+  res.json({
+    id: conversation.id,
+    userId: conversation.userId,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt,
+    summary: conversation.summary,
+    summaryUpdatedAt: conversation.summaryUpdatedAt,
+    messageCount: conversation.messages.length,
+    messages
+  });
+});
+
+// Enhanced chat endpoint with conversation memory integration
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message } = req.body;
-    console.log('🔵 SERVER: Received chat request:', { message });
+    console.log('🔵 SERVER: Received chat request:', req.body);
 
-    if (!global.langchainAgent) {
-      throw new Error('LangChain agent not initialized');
+    const { message, conversationId, userId = 'anonymous', metadata = {} } = req.body || {};
+
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Use LangChain agent for response
-    console.log('🤖 Using LangChain agent for response');
-    
-    const result = await global.langchainAgent.invoke({
-      input: message
-    });
+    // Get or create conversation
+    let conversation;
+    let currentConversationId = conversationId;
 
-    res.json({
-      reply: result.output,
-      source: 'langchain',
-      functions_used: result.steps?.map(step => step.action?.tool) || []
-    });
-
-  } catch (error) {
-    console.error('❌ LangChain agent error:', error);
-    
-    // Enhanced fallback response for biological analysis
-    console.log('🔵 SERVER: LangChain failed, using enhanced fallback');
-    
-    // Provide context-aware responses based on message content
-    let contextualReply = "I can help you analyze biological images and H&E stained tissue slides. ";
-    
-    if (message.toLowerCase().includes('roi') || message.toLowerCase().includes('region')) {
-      contextualReply += "For ROI analysis, I can help you:\n\n" +
-        "🔬 **H&E Tissue Analysis:**\n" +
-        "- Identify glandular structures and epithelial cells\n" +
-        "- Analyze stromal components and connective tissue\n" +
-        "- Quantify cell density in defined regions\n" +
-        "- Assess tissue architecture and morphology\n\n" +
-        "📊 **Available Functions:**\n" +
-        "- getSlideInfo: Get slide metadata and properties\n" +
-        "- analyzeBiologicalFeatures: Analyze cellular and tissue features\n" +
-        "- createROI: Create regions of interest for analysis\n" +
-        "- findSimilarSlides: Find similar tissue patterns";
-    } else if (message.toLowerCase().includes('cd68') || message.toLowerCase().includes('immune')) {
-      contextualReply += "For immune cell analysis:\n\n" +
-        "🧬 **Immune Infiltration Analysis:**\n" +
-        "- CD68+ macrophage identification and quantification\n" +
-        "- Spatial distribution of immune cells\n" +
-        "- Tissue infiltration patterns\n" +
-        "- Cell density calculations per ROI\n\n" +
-        "💡 **Tip:** Draw ROIs around areas of interest and I can provide detailed analysis of immune cell populations.";
+    if (currentConversationId) {
+      conversation = conversationMemory.getConversation(currentConversationId);
+      if (!conversation) {
+        console.log(`⚠️ Conversation ${currentConversationId} not found, creating new one`);
+        conversation = conversationMemory.createConversation({ userId, metadata });
+        currentConversationId = conversation.id;
+      }
     } else {
-      contextualReply += "Here's what I can help you with:\n\n" +
-        "🔬 **Image Analysis:**\n" +
-        "- H&E stained tissue interpretation\n" +
-        "- Cellular morphology assessment\n" +
-        "- Tissue architecture analysis\n\n" +
-        "📐 **ROI Functions:**\n" +
-        "- Draw regions of interest on slides\n" +
-        "- Quantitative analysis of selected areas\n" +
-        "- Cell counting and density measurements\n\n" +
-        "💬 **Try asking:**\n" +
-        "- 'Analyze the tissue morphology in this ROI'\n" +
-        "- 'What cell types are visible in this region?'\n" +
-        "- 'Calculate cell density in ROI_1'";
+      conversation = conversationMemory.createConversation({ userId, metadata });
+      currentConversationId = conversation.id;
+      console.log(`🆕 Created new conversation: ${currentConversationId}`);
     }
+
+    // Add user message to conversation
+    conversationMemory.appendMessage(currentConversationId, {
+      role: 'user',
+      content: message,
+      metadata
+    });
+
+    // Get conversation context for LangChain
+    const context = conversationMemory.getContext(currentConversationId);
     
-    res.json({
-      reply: contextualReply,
-      source: 'enhanced_fallback',
-      demo_mode: true
+    // Convert messages to LangChain format
+    const chatHistory = context.messages.slice(-5).map(msg => {
+      try {
+        if (msg.role === 'user') {
+          return new HumanMessage(msg.content);
+        } else if (msg.role === 'assistant') {
+          return new AIMessage(msg.content);
+        }
+        return new SystemMessage(msg.content);
+      } catch (error) {
+        console.error('Error creating message:', error);
+        return new HumanMessage(msg.content || '');
+      }
+    }).filter(Boolean);
+
+    // Use LangChain agent with conversation context
+    try {
+      if (!global.langchainAgent) {
+        throw new Error('LangChain agent not initialized');
+      }
+
+      console.log(`🤖 Using LangChain agent with ${chatHistory.length} context messages`);
+
+      const result = await global.langchainAgent.invoke({
+        input: message,
+        chat_history: chatHistory
+      });
+
+      const agentReply = `${result.output ?? ''}`.trim();
+      const functionsUsed = result.steps?.map((step) => step.action?.tool).filter(Boolean) || [];
+
+      // Add assistant response to conversation
+      conversationMemory.appendMessage(currentConversationId, {
+        role: 'assistant',
+        content: agentReply,
+        metadata: { functions_used: functionsUsed }
+      });
+
+      // Try to summarize if needed
+      await conversationMemory.maybeSummarize(currentConversationId);
+
+      console.log('✅ LangChain agent response:', agentReply);
+
+      res.json({
+        conversationId: currentConversationId,
+        reply: agentReply,
+        source: 'langchain',
+        functions_used: functionsUsed,
+        summary: context.summary || null
+      });
+    } catch (error) {
+      console.error('❌ LangChain agent error:', error);
+      console.log('🔵 SERVER: Using enhanced fallback response');
+
+      let contextualReply = 'I can help you analyze biological images and H&E stained tissue slides. ';
+      const normalizedMessage = message.toLowerCase();
+
+      if (normalizedMessage.includes('roi') || normalizedMessage.includes('region')) {
+        contextualReply +=
+          'For ROI analysis, I can help you:\n\n' +
+          '🔬 **H&E Tissue Analysis:**\n' +
+          '- Identify glandular structures and epithelial cells\n' +
+          '- Analyze stromal components and connective tissue\n' +
+          '- Quantify cell density in defined regions\n' +
+          '- Assess tissue architecture and morphology\n\n' +
+          '📊 **Available Functions:**\n' +
+          '- getSlideInfo: Get slide metadata and properties\n' +
+          '- analyzeBiologicalFeatures: Analyze cellular and tissue features\n' +
+          '- createROI: Create regions of interest for analysis\n' +
+          '- findSimilarSlides: Find similar tissue patterns';
+      } else if (normalizedMessage.includes('cd68') || normalizedMessage.includes('immune')) {
+        contextualReply +=
+          'For immune cell analysis:\n\n' +
+          '🧬 **Immune Infiltration Analysis:**\n' +
+          '- CD68+ macrophage identification and quantification\n' +
+          '- Spatial distribution of immune cells\n' +
+          '- Tissue infiltration patterns\n' +
+          '- Cell density calculations per ROI\n\n' +
+          '💡 **Tip:** Draw ROIs around areas of interest and I can provide detailed analysis of immune cell populations.';
+      } else {
+        contextualReply +=
+          "Here's what I can help you with:\n\n" +
+          '🔬 **Image Analysis:**\n' +
+          '- H&E stained tissue interpretation\n' +
+          '- Cellular morphology assessment\n' +
+          '- Tissue architecture analysis\n\n' +
+          '📐 **ROI Functions:**\n' +
+          '- Draw regions of interest on slides\n' +
+          '- Quantitative analysis of selected areas\n' +
+          '- Cell counting and density measurements\n\n' +
+          "💬 **Try asking:**\n" +
+          "- 'Analyze the tissue morphology in this ROI'\n" +
+          "- 'What cell types are visible in this region?'\n" +
+          "- 'Calculate cell density in ROI_1'";
+      }
+
+      // Add fallback message to conversation
+      conversationMemory.appendMessage(currentConversationId, {
+        role: 'assistant',
+        content: contextualReply,
+        metadata: { source: 'fallback', error: error.message }
+      });
+
+      res.json({
+        conversationId: currentConversationId,
+        reply: contextualReply,
+        source: 'enhanced_fallback',
+        demo_mode: true,
+        error: error.message
+      });
+    }
+  } catch (serverError) {
+    console.error('❌ Chat endpoint error:', serverError);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: serverError.message
     });
   }
 });
 
-// NEW: Function registry endpoints for development and debugging
+// Function tools inspection endpoints
 app.get('/api/functions', (req, res) => {
+  const tools = global.langchainTools || [];
   res.json({
-    functions: functionRegistry.list(),
-    total: functionRegistry.list().length
+    functions: tools.map(tool => ({
+      name: tool.name,
+      description: tool.description,
+      schema: tool.schema
+    })),
+    total: tools.length
   });
 });
 
 app.get('/api/functions/:name', (req, res) => {
   const { name } = req.params;
-  const func = functionRegistry.get(name);
+  const tools = global.langchainTools || [];
+  const tool = tools.find(t => t.name === name);
 
-  if (!func) {
+  if (!tool) {
     return res.status(404).json({ error: 'Function not found' });
   }
 
-  res.json(func);
+  res.json({
+    name: tool.name,
+    description: tool.description,
+    schema: tool.schema
+  });
 });
 
-// NEW: Direct function execution endpoint (for testing)
+// Direct function execution endpoint (for testing)
 app.post('/api/functions/:name/execute', async (req, res) => {
   const { name } = req.params;
   const { input = {} } = req.body;
 
   try {
-    if (slideChatAgent) {
-      const result = await slideChatAgent.executeFunction(name, input);
-      res.json(result);
-    } else {
-      const result = await functionRegistry.execute(name, input);
-      res.json({
-        success: true,
-        function: name,
-        input: input,
-        result: result
-      });
+    const tools = global.langchainTools || [];
+    const tool = tools.find(t => t.name === name);
+
+    if (!tool) {
+      return res.status(404).json({ error: 'Function not found' });
     }
+
+    const result = await tool.invoke(input);
+    res.json({
+      success: true,
+      function: name,
+      input: input,
+      result: result
+    });
   } catch (error) {
     res.status(400).json({
       success: false,
@@ -536,11 +712,12 @@ const PORT = process.env.PORT || 5050;
 
 async function startServer() {
   await initializeServer();
-  
+
   app.listen(PORT, () => {
     console.log(`🚀 Enhanced SlidChat server running on port ${PORT}`);
     console.log(`📊 Functions registered: 4`);
     console.log(`🤖 LangChain agent: ${global.langchainAgent ? 'enabled' : 'disabled'}`);
+    console.log(`🧠 Conversation memory: ${conversationMemory ? 'enabled' : 'disabled'} (storage: ${conversationMemory?.storagePath || 'n/a'})`);
     console.log(`\n🧪 Try these toy examples:`);
     console.log(`   GET  http://localhost:${PORT}/api/examples`);
     console.log(`   GET  http://localhost:${PORT}/api/functions`);

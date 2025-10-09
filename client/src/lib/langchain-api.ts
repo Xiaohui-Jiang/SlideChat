@@ -133,19 +133,19 @@ export class LangChainAPI {
   async testFunction(functionName: string): Promise<FunctionExecutionResult> {
     const sampleInputs: Record<string, any> = {
       getSlideInfo: { slideId: 'lung_01' },
-      createROI: { 
-        slideId: 'lung_01', 
-        name: 'test_region', 
-        geometry: { x: 100, y: 200, w: 300, h: 250 } 
+      createROI: {
+        slideId: 'lung_01',
+        name: 'test_region',
+        geometry: { x: 100, y: 200, w: 300, h: 250 }
       },
-      analyzeBiologicalFeatures: { 
-        slideId: 'lung_01', 
-        analysisType: 'morphology' 
+      analyzeBiologicalFeatures: {
+        slideId: 'lung_01',
+        analysisType: 'morphology'
       },
-      findSimilarSlides: { 
-        slideId: 'lung_01', 
-        similarityType: 'morphology', 
-        threshold: 0.8 
+      findSimilarSlides: {
+        slideId: 'lung_01',
+        similarityType: 'morphology',
+        threshold: 0.8
       }
     };
 

@@ -1,0 +1,21 @@
+{
+  "id": "ccf8197a-3c08-467d-9b39-1b64b3089c58",
+  "userId": "anonymous",
+  "metadata": {},
+  "createdAt": 1760041393562,
+  "updatedAt": 1760041393562,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "3b0f117b-ec74-46e8-b25e-3a0801bb14ef",
+      "role": "user",
+      "content": "tianhao is a pig",
+      "name": null,
+      "metadata": {},
+      "createdAt": 1760041393562,
+      "tokenEstimate": 4
+    }
+  ]
+}

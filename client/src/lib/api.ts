@@ -36,21 +36,50 @@ export async function fetchSlides(): Promise<Slide[]> {
   );
 }
 
+interface ChatResponse {
+  conversationId: string;
+  reply: string;
+  source: string;
+  functions_used?: string[];
+  summary?: string | null;
+  error?: string;
+}
+
+// Store conversation state
+let currentConversationId: string | null = null;
+
 export async function sendChat(message: string): Promise<string> {
   console.log('🌐 API: Sending chat request to server:', message);
   try {
-    const result = await safeFetch<{ reply: string }>(
+    const requestBody = {
+      message,
+      ...(currentConversationId && { conversationId: currentConversationId }),
+      userId: 'user',
+      metadata: { timestamp: Date.now() }
+    };
+
+    const result = await safeFetch<ChatResponse>(
       `${API}/chat`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify(requestBody),
       },
       () => {
         console.log('⚠️ API: Using fallback mock response');
-        return { reply: `Mock reply: I received "${message}".` };
+        return {
+          conversationId: 'mock-conversation',
+          reply: `Mock reply: I received "${message}".`,
+          source: 'fallback'
+        };
       }
     );
+
+    // Store conversation ID for subsequent requests
+    if (result.conversationId) {
+      currentConversationId = result.conversationId;
+    }
+
     console.log('🌐 API: Got response from server:', result);
     return result.reply;
   } catch (error) {

@@ -1,0 +1,21 @@
+{
+  "id": "fcc285d1-571a-49d3-a7f7-429cdb8d29f5",
+  "userId": "test-user",
+  "metadata": {},
+  "createdAt": 1760043648473,
+  "updatedAt": 1760043648474,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "a3b580c5-d790-4f0b-a97b-794dc094a512",
+      "role": "user",
+      "content": "Hello, I need help with slide analysis",
+      "name": null,
+      "metadata": {},
+      "createdAt": 1760043648474,
+      "tokenEstimate": 10
+    }
+  ]
+}
