@@ -1,0 +1,37 @@
+{
+  "id": "a8f69615-856a-4efc-80e0-69f82cf4cf64",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1760563492385
+  },
+  "createdAt": 1760563492395,
+  "updatedAt": 1760563492458,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "346d9bd9-0384-4928-9bbc-3f0e62c64595",
+      "role": "user",
+      "content": "Please analyze ROI \"ROI 1\" on demo_he_tissue11111.jpg: x=217, y=244, w=310, h=103.\n- Quantify CD68-positive cell density within the ROI.\n- Summarize spatial immune infiltration patterns.",
+      "name": null,
+      "metadata": {
+        "timestamp": 1760563492385
+      },
+      "createdAt": 1760563492397,
+      "tokenEstimate": 47
+    },
+    {
+      "id": "75745f8f-d1c4-4a1c-b0ad-2a9ebbd8f79d",
+      "role": "assistant",
+      "content": "I can help you analyze biological images and H&E stained tissue slides. For ROI analysis, I can help you:\n\n🔬 **H&E Tissue Analysis:**\n- Identify glandular structures and epithelial cells\n- Analyze stromal components and connective tissue\n- Quantify cell density in defined regions\n- Assess tissue architecture and morphology\n\n📊 **Available Functions:**\n- getSlideInfo: Get slide metadata and properties\n- analyzeBiologicalFeatures: Analyze cellular and tissue features\n- createROI: Create regions of interest for analysis\n- findSimilarSlides: Find similar tissue patterns",
+      "name": null,
+      "metadata": {
+        "source": "fallback",
+        "error": "The OPENAI_API_KEY environment variable is missing or empty; either provide it, or instantiate the OpenAI client with an apiKey option, like new OpenAI({ apiKey: 'My API Key' })."
+      },
+      "createdAt": 1760563492458,
+      "tokenEstimate": 144
+    }
+  ]
+}
