@@ -113,6 +113,8 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               <div className="p-3 border-b bg-gray-50">
                 <div className="space-y-2">
                   <input
+                    id="project-name-input"
+                    name="projectName"
                     type="text"
                     placeholder="Project name"
                     value={newProjectName}
@@ -120,6 +122,8 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     className="w-full px-2 py-1 text-sm border rounded"
                   />
                   <input
+                    id="project-description-input"
+                    name="projectDescription"
                     type="text"
                     placeholder="Description (optional)"
                     value={newProjectDescription}
@@ -176,6 +180,8 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               <label className="inline-flex items-center px-3 py-1.5 text-sm bg-green-500 text-white rounded cursor-pointer hover:bg-green-600">
                 Add Biological Images
                 <input
+                  id="project-images-input"
+                  name="projectImages"
                   type="file"
                   multiple
                   accept="image/*,.svs,.tif,.tiff,.ome.tiff,.ndpi,.vsi,.scn"

@@ -349,6 +349,8 @@ export default function SlideViewer({ slides, selectedId, onSelect, onAnalyzeROI
           <div className="bg-white rounded-lg p-6 w-80">
             <h3 className="text-lg font-semibold mb-4">Name Your ROI</h3>
             <input
+              id="roi-name-input"
+              name="roiName"
               type="text"
               value={roiName}
               onChange={(e) => setRoiName(e.target.value)}

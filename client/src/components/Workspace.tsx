@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { ProjectPanel } from './ProjectPanel';
-import { ImageViewerPanel } from './ImageViewerPanel';
+import ImageViewerPanel from './ImageViewerPanel';
 import { LogResultsPanel } from './LogResultsPanel';
 import { ChatPanel } from './ChatPanel';
 import type { 

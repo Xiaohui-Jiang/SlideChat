@@ -48,9 +48,16 @@ export default function UploadBar({ onAddSlide }: Props) {
   }
 
   return (
-    <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white border shadow cursor-pointer">
+    <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white border shadow cursor-pointer" htmlFor="slide-upload-input">
       <span className="text-sm font-medium">Upload slide</span>
-      <input type="file" accept={ACCEPT} onChange={onChange} className="hidden" />
+      <input
+        id="slide-upload-input"
+        name="slideUpload"
+        type="file"
+        accept={ACCEPT}
+        onChange={onChange}
+        className="hidden"
+      />
     </label>
   );
 }

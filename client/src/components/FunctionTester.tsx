@@ -90,6 +90,8 @@ export const FunctionTester: React.FC<FunctionTesterProps> = ({ className = '' }
         <h3 className="text-lg font-semibold mb-3">Chat with LangChain Agent</h3>
         <div className="flex gap-2 mb-3">
           <input
+            id="chat-message-input"
+            name="chatMessage"
             type="text"
             value={chatMessage}
             onChange={(e) => setChatMessage(e.target.value)}
