@@ -1,3 +1,16 @@
+## 11.1
+
+### Jiacheng
+
+- Please work in ./langchain_multiagent_forfront,and i think all you need is modifying user_io so that it is in the chat.
+- If you have time, show figures in somewhere in frontend.
+- See how to write log into report
+
+### Tianhao
+
+- Make sure you know how to add roi information to .h5 / .h5ad, this is our important selling point.
+- Understand your data, use 10x and scanpy tutorials
+
 ## 10.3-10.10
 
 ### Tianhao
