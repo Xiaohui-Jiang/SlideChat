@@ -136,7 +136,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     agent = BioAnalysisAgent(user_io=user_io, plan_builder=plan_builder)
     result = agent.run(args.command)
 
-    user_io.display("Execution finished. Generated artifacts:")
+    user_io.display("Execution finished. Output locations:")
     user_io.display(f"- Report: {result.report_path}")
     user_io.display(f"- Figures PDF: {result.pdf_path}")
     user_io.display(f"- Log JSON: {result.log_path}")
