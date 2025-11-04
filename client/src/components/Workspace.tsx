@@ -12,7 +12,14 @@ import type {
   AnalysisResult,
   Slide 
 } from '../types';
-import { fetchSlides, sendChat, uploadSlideToServer, fetchImageROIs, createImageROI } from '../lib/api';
+import { 
+  fetchSlides, 
+  sendChat, 
+  uploadSlideToServer, 
+  fetchImageROIs, 
+  createImageROI,
+  DEFAULT_PROJECT_ID
+} from '../lib/api';
 
 export const Workspace: React.FC = () => {
   // Core state
@@ -130,10 +137,11 @@ export const Workspace: React.FC = () => {
     
     // Load ROIs for the selected image
     try {
-      const imageROIs = await fetchImageROIs(image.id);
+      const projectId = image.projectId ?? selectedProject?.id ?? DEFAULT_PROJECT_ID;
+      const imageROIs = await fetchImageROIs(image.id, projectId);
       setROIs(prev => {
         // Remove existing ROIs for this image and add the new ones
-        const otherROIs = prev.filter(roi => roi.imageId !== image.id);
+        const otherROIs = prev.filter(roi => roi.imageId !== image.id || roi.projectId !== projectId);
         return [...otherROIs, ...imageROIs];
       });
     } catch (error) {
@@ -199,7 +207,8 @@ export const Workspace: React.FC = () => {
   // ROI management
   const handleROICreate = useCallback(async (roiData: Omit<ROI, 'id' | 'createdAt'>) => {
     try {
-      const newROI = await createImageROI(roiData.imageId, roiData.name, roiData.geometry);
+  const projectId = roiData.projectId ?? selectedProject?.id ?? DEFAULT_PROJECT_ID;
+  const newROI = await createImageROI(roiData.imageId, roiData.name, roiData.geometry, projectId);
       setROIs(prev => [...prev, newROI]);
       setSelectedROI(newROI);
       addLog('success', `Created ROI: ${newROI.name}`);
@@ -291,9 +300,9 @@ export const Workspace: React.FC = () => {
   }, [selectedROI, selectedImage, addResult, addLog]);
 
   return (
-    <div className="h-screen flex bg-gray-100">
+    <div className="h-screen flex bg-gray-100 overflow-hidden">
       {/* Left Panel - Project and Image Management */}
-      <div className="w-80 flex-shrink-0">
+      <div className="w-80 flex-shrink-0 hidden lg:block">
         <ProjectPanel
           projects={projects}
           images={images}
@@ -307,9 +316,9 @@ export const Workspace: React.FC = () => {
       </div>
 
       {/* Center Panels - Image Viewer and Log/Results */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Top - Image Viewer */}
-        <div className="flex-1">
+        <div className="flex-1 min-h-0">
           <ImageViewerPanel
             selectedImage={selectedImage}
             rois={rois}
@@ -323,7 +332,7 @@ export const Workspace: React.FC = () => {
         </div>
 
         {/* Bottom - Log and Results */}
-        <div className="h-64 flex-shrink-0">
+        <div className="h-64 flex-shrink-0 hidden md:block">
           <LogResultsPanel
             logs={logs}
             results={results}
@@ -332,7 +341,7 @@ export const Workspace: React.FC = () => {
       </div>
 
       {/* Right Panel - Chat */}
-      <div className="w-80 flex-shrink-0">
+      <div className="w-80 flex-shrink-0 hidden xl:block">
         <ChatPanel
           messages={messages}
           loading={loading}

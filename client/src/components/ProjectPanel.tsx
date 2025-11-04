@@ -100,7 +100,10 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                 </button>
                 {selectedProject && (
                   <button
-                    onClick={() => onProjectSelect(selectedProject)}
+                    onClick={() => {
+                      onProjectSelect(selectedProject);
+                      setActiveTab('images');
+                    }}
                     className="px-3 py-1.5 text-sm bg-green-500 text-white rounded hover:bg-green-600"
                   >
                     Open Project
@@ -176,25 +179,53 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
 
         {activeTab === 'images' && (
           <div className="h-full flex flex-col">
-            <div className="p-3 border-b">
-              <label className="inline-flex items-center px-3 py-1.5 text-sm bg-green-500 text-white rounded cursor-pointer hover:bg-green-600">
-                Add Biological Images
-                <input
-                  id="project-images-input"
-                  name="projectImages"
-                  type="file"
-                  multiple
-                  accept="image/*,.svs,.tif,.tiff,.ome.tiff,.ndpi,.vsi,.scn"
-                  onChange={handleAddImages}
-                  className="hidden"
-                />
-              </label>
-              <div className="text-xs text-gray-500 mt-1">
-                Supports: SVS, TIF, OME-TIFF, NDPI, VSI, SCN, JPG, PNG
-              </div>
+            <div className="p-3 border-b bg-gray-50">
+              {selectedProject ? (
+                <>
+                  <div className="text-xs font-medium text-gray-700 mb-2">
+                    Project: {selectedProject.name}
+                  </div>
+                  <label className="inline-flex items-center px-3 py-1.5 text-sm bg-green-500 text-white rounded cursor-pointer hover:bg-green-600">
+                    📤 Upload Images
+                    <input
+                      id="project-images-input"
+                      name="projectImages"
+                      type="file"
+                      multiple
+                      accept="image/*,.svs,.tif,.tiff,.ome.tiff,.ndpi,.vsi,.scn"
+                      onChange={handleAddImages}
+                      className="hidden"
+                    />
+                  </label>
+                  <div className="text-xs text-gray-500 mt-2">
+                    Supported formats: JPG, PNG, TIFF, SVS, OME-TIFF, NDPI, VSI, SCN
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm text-gray-500 text-center py-4">
+                  Please select or create a project first to upload images
+                </div>
+              )}
             </div>
 
             <div className="flex-1 overflow-y-auto p-3">
+              {!selectedProject ? (
+                <div className="flex flex-col items-center justify-center h-full text-center px-4">
+                  <div className="text-4xl mb-3">📁</div>
+                  <div className="text-sm font-medium text-gray-700 mb-1">No Project Selected</div>
+                  <div className="text-xs text-gray-500">
+                    Select a project from the Projects tab to view and manage images
+                  </div>
+                </div>
+              ) : projectImages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-center px-4">
+                  <div className="text-4xl mb-3">🖼️</div>
+                  <div className="text-sm font-medium text-gray-700 mb-1">No Images Yet</div>
+                  <div className="text-xs text-gray-500 mb-3">
+                    Upload your first biological or standard image to get started
+                  </div>
+                </div>
+              ) : (
               <div className="space-y-2">
                 {projectImages.map((image) => (
                   <div
@@ -230,6 +261,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                   </div>
                 ))}
               </div>
+              )}
             </div>
           </div>
         )}

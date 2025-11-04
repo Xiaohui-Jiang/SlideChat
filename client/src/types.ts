@@ -11,12 +11,12 @@ export interface Project {
 export interface Image {
   id: ID;
   name: string;
-  imageUrl: string;      // full-size/preview URL (JPEG/PNG or DeepZoom landing image)
-  thumbnailUrl: string;  // small preview URL
-  sourceType?: 'local' | 'uploaded' | 'demo'; // optional: track where it came from
-  projectId?: ID;        // which project this image belongs to
-  format?: string;       // file extension (.svs, .tif, etc.)
-  metadata?: BiologicalImageMetadata; // biological image metadata
+  imageUrl: string;
+  thumbnailUrl: string;
+  sourceType?: 'local' | 'uploaded' | 'demo';
+  projectId?: ID;
+  format?: string;
+  metadata?: BiologicalImageMetadata;
 }
 
 export interface BiologicalImageMetadata {
@@ -33,19 +33,26 @@ export interface BiologicalImageMetadata {
   fileFormat?: string;
   pyramidLevels?: number;
   needsProcessing?: boolean;
+  description?: string;
+  source?: string;
+  roiAlignmentCsv?: string;
+  originalAssetPath?: string;
 }
 
-// Keep Slide for backward compatibility, but alias to Image
 export type Slide = Image;
 
 export interface Rect {
-  x: number; y: number; w: number; h: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface ROI {
   id: ID;
   name: string;
-  imageId: ID;  // Changed from slideId to imageId for consistency
+  projectId: ID;
+  imageId: ID;
   geometry: Rect;
   createdAt: number;
 }

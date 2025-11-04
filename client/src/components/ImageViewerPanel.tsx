@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Image, ROI } from '../types.js';
+import type { Image, ROI } from '../types';
 import OpenSeadragonSlideViewer from './OpenSeadragonSlideViewer';
 
 interface ImageViewerPanelProps {
@@ -68,6 +68,7 @@ export default function ImageViewerPanel({
             slides={[selectedImage]}
             selectedId={selectedImage.id}
             onSelect={() => {}}
+            projectId={selectedImage.projectId}
             onAnalyzeROI={onAnalyzeROI}
           />
         )}

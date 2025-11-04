@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { Rect, Slide, ROI } from '../types';
-import { fetchROIs, createROI, updateROIName, deleteROI } from '../lib/api';
+import { fetchROIs, createROI, updateROIName, deleteROI, DEFAULT_PROJECT_ID } from '../lib/api';
 
 type Props = {
   slides: Slide[];
@@ -21,6 +21,7 @@ export default function EnhancedSlideViewer({ slides, selectedId, onSelect, onAn
     () => slides.find(s => s.id === selectedId) ?? slides[0],
     [slides, selectedId]
   );
+  const projectScope = selected?.projectId ?? DEFAULT_PROJECT_ID;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -91,9 +92,9 @@ export default function EnhancedSlideViewer({ slides, selectedId, onSelect, onAn
     setEditingROI(null);
     
     if (selected?.id) {
-      fetchROIs(selected.id).then(setRois);
+      fetchROIs(selected.id, projectScope).then(setRois);
     }
-  }, [selected?.id]);
+  }, [selected?.id, projectScope]);
 
   // Update image size when image loads
   const handleImageLoad = useCallback(() => {
@@ -312,7 +313,7 @@ export default function EnhancedSlideViewer({ slides, selectedId, onSelect, onAn
     
     const name = `ROI ${rois.length + 1}`;
     try {
-      const newROI = await createROI(selected.id, name, currentDrawing);
+  const newROI = await createROI(selected.id, name, currentDrawing, projectScope);
       setRois(prev => [...prev, newROI]);
       setCurrentDrawing(null);
     } catch (error) {

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import '../styles/openseadragon.css';
 import type { Slide, ROI } from '../types';
-import { fetchROIs, createROI, updateROIName, deleteROI as deleteROIFromAPI } from '../lib/api';
+import { fetchImageROIs, createImageROI, deleteImageROI, DEFAULT_PROJECT_ID } from '../lib/api';
 
 // Import OpenSeadragon without types (use any for now)
 declare const OpenSeadragon: any;
@@ -11,12 +11,13 @@ type Props = {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onAnalyzeROI?: (roi: ROI, slide: Slide) => void;
+  projectId?: string;
 };
 
-interface OpenSeadragonROI extends ROI {
+type OpenSeadragonROI = ROI & {
   overlay?: HTMLElement;
   color?: string;
-}
+};
 
 const ROI_COLORS = ['#10b981', '#3b82f6', '#f97316', '#ec4899', '#8b5cf6', '#f59e0b', '#0ea5e9'];
 
@@ -58,8 +59,9 @@ interface OSDRect {
   height: number;
 }
 
-export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect, onAnalyzeROI }: Props) {
+export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect, onAnalyzeROI, projectId }: Props) {
   const selected = slides.find(s => s.id === selectedId) ?? slides[0];
+  const projectScope = projectId ?? selected?.projectId ?? DEFAULT_PROJECT_ID;
   const viewerRef = useRef<HTMLDivElement>(null);
   const osdViewerRef = useRef<any>(null);
   const osdModuleRef = useRef<any>(null);
@@ -72,6 +74,19 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
   const [isLoading, setIsLoading] = useState(true);
   const roisRef = useRef<OpenSeadragonROI[]>([]);
   const roiColorsRef = useRef<Record<string, string>>({});
+  
+  // Use refs to avoid stale closures in event handlers
+  const createROIFromRectRef = useRef<((rect: OSDRect) => Promise<void>) | null>(null);
+  const findROIAtPointRef = useRef<((point: OSDPoint) => OpenSeadragonROI | null) | null>(null);
+  const highlightROIRef = useRef<((roi: OpenSeadragonROI) => void) | null>(null);
+  const clearROIHighlightsRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    setRois([]);
+    roisRef.current = [];
+    roiColorsRef.current = {};
+    setSelectedROI(null);
+  }, [selected?.id, projectScope]);
 
   const ensureOverlayPointerEvents = useCallback((element: HTMLElement | null) => {
     if (!element) return;
@@ -193,11 +208,13 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
           flickEnabled: false
         },
         zoomPerScroll: 1.2,
-        constrainDuringPan: true,
-        visibilityRatio: 0.5,
+        constrainDuringPan: false,  // Allow panning beyond image bounds
+        visibilityRatio: 0.0001,        // Only require 0.01% of image to be visible
         defaultZoomLevel: 1,
         minZoomLevel: 0.1,
         maxZoomLevel: 10,
+        wrapHorizontal: false,
+        wrapVertical: false,
         crossOriginPolicy: 'Anonymous',
         ajaxWithCredentials: false,
         drawer: 'canvas'
@@ -215,7 +232,9 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         setIsLoading(false);
         applyNavigatorStyle();
         if (selected?.id) {
-          fetchROIs(selected.id).then((loadedROIs) => {
+          console.log('🔄 Image opened, fetching ROIs:', { imageId: selected.id, projectId: projectScope });
+          fetchImageROIs(selected.id, projectScope).then((loadedROIs) => {
+            console.log('📦 Fetched ROIs from server:', loadedROIs.length);
             loadROIs(loadedROIs);
           });
         }
@@ -259,7 +278,7 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         viewerRef.current.innerHTML = '';
       }
     };
-  }, [selected?.id]);
+  }, [selected?.id, projectScope, applyNavigatorStyle]);
 
   useEffect(() => {
     roisRef.current = rois;
@@ -303,6 +322,12 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         currentPoint = startPoint;
       }
 
+      console.log('🎯 Finalizing drawing:', {
+        startPoint: { x: startPoint.x, y: startPoint.y },
+        currentPoint: { x: currentPoint.x, y: currentPoint.y },
+        eventPosition: event?.position
+      });
+
       const rect = new OpenSeadragon.Rect(
         Math.min(startPoint.x, currentPoint.x),
         Math.min(startPoint.y, currentPoint.y),
@@ -310,10 +335,25 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         Math.abs(currentPoint.y - startPoint.y)
       );
 
+      console.log('📦 Final rect (viewport coords):', {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height
+      });
+
       cleanupOverlay();
 
-      if (rect.width > 0.01 && rect.height > 0.01) {
-        createROIFromRect(rect);
+      // Check size in viewport coordinates - must be reasonable for current zoom level
+      // At zoom level 1, minimum 0.01 (1% of image width) is reasonable
+      // At zoom level 10, we can create much smaller ROIs
+      const zoom = viewer.viewport.getZoom();
+      const minSize = 0.001 / zoom; // Adjust minimum based on zoom level
+      
+      if (rect.width > minSize && rect.height > minSize) {
+        createROIFromRectRef.current?.(rect);
+      } else {
+        console.log('⚠️ Rect too small, not creating ROI:', rect.width, rect.height, 'zoom:', zoom, 'minSize:', minSize);
       }
     };
 
@@ -388,21 +428,22 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
     viewer.addHandler('canvas-click', (event: any) => {
       if (!event.originalEvent.ctrlKey && !event.originalEvent.metaKey) {
         const viewportPoint = viewer.viewport.pointFromPixel(event.position);
-        const clickedROI = findROIAtPoint(viewportPoint);
+        const clickedROI = findROIAtPointRef.current?.(viewportPoint);
         
         if (clickedROI) {
           event.preventDefaultAction = true;
           setSelectedROI(clickedROI);
-          highlightROI(clickedROI);
+          highlightROIRef.current?.(clickedROI);
         } else {
           setSelectedROI(null);
-          clearROIHighlights();
+          clearROIHighlightsRef.current?.();
         }
       }
     });
-  }, []);
+  }, [ensureOverlayPointerEvents]);
+  // ☝️ Removed rois, selected, projectScope from dependencies since we use refs for callbacks
 
-  const createROIFromRect = async (rect: OSDRect) => {
+  const createROIFromRect = useCallback(async (rect: OSDRect) => {
     if (!selected) return;
 
     try {
@@ -415,39 +456,108 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
       // Get the tiled image to get proper dimensions
       const tiledImage = viewer.world.getItemAt(0);
       const imageSize = tiledImage.getContentSize();
+      const imageBounds = tiledImage.getBounds();
+      const imageWidth = tiledImage.source.dimensions.x;
+      const imageHeight = tiledImage.source.dimensions.y;
+      
+      console.log('🖼️ Image dimension details:', {
+        contentSize: imageSize,
+        bounds: imageBounds,
+        sourceDimensions: { x: imageWidth, y: imageHeight },
+        viewportBounds: viewer.viewport.getBounds()
+      });
       
       if (!imageSize) {
         console.error('Could not get image size');
         return;
       }
 
-      // Convert viewport coordinates to image coordinates
-      // OpenSeadragon viewport coordinates are normalized (0-1 range relative to image)
-      const imageGeometry = {
-        x: Math.max(0, rect.x * imageSize.x),
-        y: Math.max(0, rect.y * imageSize.y),
-        w: Math.min(imageSize.x - (rect.x * imageSize.x), rect.width * imageSize.x),
-        h: Math.min(imageSize.y - (rect.y * imageSize.y), rect.height * imageSize.y)
+      // Convert viewport coordinates to image pixel coordinates
+      // OpenSeadragon viewport coordinates are normalized (image width = 1.0)
+      // Use source dimensions for accurate pixel coordinates
+      const actualImageWidth = imageWidth || imageSize.x;
+      const actualImageHeight = imageHeight || imageSize.y;
+      
+      const rawGeometry = {
+        x: rect.x * actualImageWidth,
+        y: rect.y * actualImageWidth,  // Note: viewport Y is based on image width!
+        w: rect.width * actualImageWidth,
+        h: rect.height * actualImageWidth
       };
+      
+      console.log('🔍 Coordinate conversion:', {
+        viewport: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
+        actualImageSize: { x: actualImageWidth, y: actualImageHeight },
+        contentSize: { x: imageSize.x, y: imageSize.y },
+        raw: rawGeometry,
+        aspectRatio: actualImageHeight / actualImageWidth,
+        viewportYRange: `0 to ${actualImageHeight / actualImageWidth}`,
+        withinBounds: {
+          x: rawGeometry.x >= 0 && rawGeometry.x <= actualImageWidth,
+          y: rawGeometry.y >= 0 && rawGeometry.y <= actualImageHeight,
+          right: (rawGeometry.x + rawGeometry.w) <= actualImageWidth,
+          bottom: (rawGeometry.y + rawGeometry.h) <= actualImageHeight
+        }
+      });
+
+      // Clamp to image boundaries - ensure ROI stays within image bounds
+      // Clamp start position
+      const clampedX = Math.max(0, Math.min(actualImageWidth, rawGeometry.x));
+      const clampedY = Math.max(0, Math.min(actualImageHeight, rawGeometry.y));
+      
+      // Clamp end position
+      const endX = Math.min(actualImageWidth, rawGeometry.x + rawGeometry.w);
+      const endY = Math.min(actualImageHeight, rawGeometry.y + rawGeometry.h);
+      
+      // Calculate clamped width and height
+      const imageGeometry = {
+        x: clampedX,
+        y: clampedY,
+        w: Math.max(0, endX - clampedX),
+        h: Math.max(0, endY - clampedY)
+      };
+
+      console.log('📏 Clamping details:', {
+        raw: rawGeometry,
+        clamped: imageGeometry,
+        imageBounds: { x: actualImageWidth, y: actualImageHeight }
+      });
 
       // Ensure minimum size
       if (imageGeometry.w < 10 || imageGeometry.h < 10) {
-        console.log('ROI too small, skipping creation');
+        console.log('❌ ROI too small, skipping creation:', imageGeometry);
         return;
       }
 
-      console.log('Creating ROI with geometry:', imageGeometry);
-      console.log('Viewport rect:', rect);
-      console.log('Image size:', imageSize);
+      console.log('✅ Creating ROI with geometry:', imageGeometry);
+      console.log('📐 Viewport rect:', rect);
+      console.log('📏 Image size:', imageSize);
 
   const name = `ROI ${roisRef.current.length + 1}`;
-      const newROI = await createROI(selected.id, name, imageGeometry);
+  const newROI = await createImageROI(selected.id, name, imageGeometry, projectScope);
       
-      // Add overlay for the new ROI
-  const roiWithOverlay: OpenSeadragonROI = { ...newROI, overlay: undefined };
-  assignROIColor(roiWithOverlay);
+      console.log('✅ Created ROI:', { 
+        id: newROI.id, 
+        name: newROI.name, 
+        projectId: newROI.projectId, 
+        imageId: newROI.imageId 
+      });
+      
+      // Add overlay for the new ROI - filter to only keep ROIs for current image/project
+      const roiWithOverlay: OpenSeadragonROI = { ...newROI, overlay: undefined };
+      assignROIColor(roiWithOverlay);
 
-  setRois(prev => (prev.some(r => r.id === roiWithOverlay.id) ? prev : [...prev, roiWithOverlay]));
+      setRois(prev => {
+        const filtered = prev.filter(r => 
+          r.imageId === selected.id && r.projectId === projectScope && r.id !== roiWithOverlay.id
+        );
+        console.log('🔄 ROI state update:', { 
+          previousCount: prev.length, 
+          afterFilter: filtered.length, 
+          newTotal: filtered.length + 1 
+        });
+        return [...filtered, roiWithOverlay];
+      });
 
       // Wait a moment for the viewer to stabilize before adding overlay
       setTimeout(() => {
@@ -458,7 +568,12 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
     } catch (error) {
       console.error('Failed to create ROI:', error);
     }
-  };
+  }, [selected, projectScope]);
+  
+  // Assign to ref so event handlers can access the latest version
+  useEffect(() => {
+    createROIFromRectRef.current = createROIFromRect;
+  }, [createROIFromRect]);
 
   const addROIOverlay = (roi: OpenSeadragonROI) => {
     const viewer = osdViewerRef.current;
@@ -473,6 +588,10 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
     
     const imageSize = tiledImage.getContentSize();
     if (!imageSize) return;
+    
+    // Get actual image dimensions
+    const imageWidth = tiledImage.source.dimensions?.x || imageSize.x;
+    const imageHeight = tiledImage.source.dimensions?.y || imageSize.y;
 
     // Create ROI element
     const roiElement = document.createElement('div');
@@ -516,25 +635,31 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
     // Note: ROI selection is handled by canvas-click handler using findROIAtPoint
     // This is because pointer-events: none allows pan/zoom to work through the overlay
 
-    // Convert image coordinates to viewport coordinates (normalized 0-1)
+    // Convert image pixel coordinates to viewport coordinates
+    // In OpenSeadragon, viewport coords are normalized where image width = 1.0
+    // Both X and Y use the same scale (based on image width)
   const module = osdModuleRef.current;
   const RectCtor = module?.Rect;
   const placement = module?.Placement?.TOP_LEFT;
     const viewportRect = RectCtor
       ? new RectCtor(
-          roi.geometry.x / imageSize.x,
-          roi.geometry.y / imageSize.y,
-          roi.geometry.w / imageSize.x,
-          roi.geometry.h / imageSize.y
+          roi.geometry.x / imageWidth,
+          roi.geometry.y / imageWidth,  // Note: divide by imageWidth, not imageHeight!
+          roi.geometry.w / imageWidth,
+          roi.geometry.h / imageWidth
         )
       : {
-          x: roi.geometry.x / imageSize.x,
-          y: roi.geometry.y / imageSize.y,
-          width: roi.geometry.w / imageSize.x,
-          height: roi.geometry.h / imageSize.y
+          x: roi.geometry.x / imageWidth,
+          y: roi.geometry.y / imageWidth,  // Note: divide by imageWidth, not imageHeight!
+          width: roi.geometry.w / imageWidth,
+          height: roi.geometry.h / imageWidth
         };
 
-    console.log('Adding ROI overlay:', roi.name, viewportRect);
+    console.log('Adding ROI overlay:', roi.name, {
+      pixelGeometry: roi.geometry,
+      viewportRect: viewportRect,
+      imageSize: { width: imageWidth, height: imageHeight }
+    });
 
     // Add overlay
     try {
@@ -581,12 +706,27 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
     const viewer = osdViewerRef.current;
     if (!viewer) return;
 
-    console.log('Loading ROIs:', loadedROIs.length);
+    console.log('📥 loadROIs called:', { 
+      totalLoaded: loadedROIs.length, 
+      currentImage: selected?.id,
+      currentProject: projectScope,
+      roisData: loadedROIs.map(r => ({ id: r.id, name: r.name, imageId: r.imageId, projectId: r.projectId }))
+    });
 
     // Clear existing overlays
     viewer.clearOverlays();
 
-    const uniqueROIs = loadedROIs.filter((roi, index, arr) =>
+    const filteredROIs = selected?.id
+      ? loadedROIs.filter(roi => roi.imageId === selected.id && roi.projectId === projectScope)
+      : loadedROIs.filter(roi => roi.projectId === projectScope);
+
+    console.log('🔍 Filtered ROIs:', { 
+      beforeFilter: loadedROIs.length, 
+      afterFilter: filteredROIs.length,
+      filtered: filteredROIs.map(r => ({ id: r.id, name: r.name, imageId: r.imageId }))
+    });
+
+    const uniqueROIs = filteredROIs.filter((roi, index, arr) =>
       arr.findIndex(candidate => candidate.id === roi.id) === index
     );
 
@@ -627,25 +767,7 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
     setRois(roisWithOverlays);
   };
 
-  const findROIAtPoint = (point: OSDPoint): OpenSeadragonROI | null => {
-    const viewer = osdViewerRef.current;
-    if (!viewer) return null;
-
-    const imageSize = viewer.world.getItemAt(0).getContentSize();
-    const imagePoint = {
-      x: point.x * imageSize.x,
-      y: point.y * imageSize.y
-    };
-
-  return roisRef.current.find(roi => {
-      return imagePoint.x >= roi.geometry.x &&
-             imagePoint.x <= roi.geometry.x + roi.geometry.w &&
-             imagePoint.y >= roi.geometry.y &&
-             imagePoint.y <= roi.geometry.y + roi.geometry.h;
-    }) || null;
-  };
-
-  const highlightROI = (roi: OpenSeadragonROI) => {
+  const highlightROI = useCallback((roi: OpenSeadragonROI) => {
     // Update all ROI overlays to show selection state
     roisRef.current.forEach(r => {
       if (!r.overlay) return;
@@ -662,9 +784,13 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         labelEl.style.backgroundColor = color;
       }
     });
-  };
+  }, [assignROIColor, hexToRgba]);
+  
+  useEffect(() => {
+    highlightROIRef.current = highlightROI;
+  }, [highlightROI]);
 
-  const clearROIHighlights = () => {
+  const clearROIHighlights = useCallback(() => {
     roisRef.current.forEach(roi => {
       if (!roi.overlay) return;
       const color = assignROIColor(roi);
@@ -676,13 +802,45 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         labelEl.style.backgroundColor = color;
       }
     });
-  };
+  }, [assignROIColor, hexToRgba]);
+  
+  useEffect(() => {
+    clearROIHighlightsRef.current = clearROIHighlights;
+  }, [clearROIHighlights]);
+
+  const findROIAtPoint = useCallback((point: OSDPoint): OpenSeadragonROI | null => {
+    const viewer = osdViewerRef.current;
+    if (!viewer) return null;
+
+    const tiledImage = viewer.world.getItemAt(0);
+    const imageSize = tiledImage.getContentSize();
+    const imageWidth = tiledImage.source.dimensions?.x || imageSize.x;
+    
+    // Convert viewport point to pixel coordinates
+    // Both X and Y use imageWidth as the scale
+    const imagePoint = {
+      x: point.x * imageWidth,
+      y: point.y * imageWidth
+    };
+
+    return roisRef.current.find(roi => {
+      return imagePoint.x >= roi.geometry.x &&
+             imagePoint.x <= roi.geometry.x + roi.geometry.w &&
+             imagePoint.y >= roi.geometry.y &&
+             imagePoint.y <= roi.geometry.y + roi.geometry.h;
+    }) || null;
+  }, []);
+  
+  useEffect(() => {
+    findROIAtPointRef.current = findROIAtPoint;
+  }, [findROIAtPoint]);
 
   const deleteROI = async (roi: OpenSeadragonROI) => {
-    if (!selected) return;
+    const imageId = roi.imageId ?? selected?.id;
+    if (!imageId) return;
 
     try {
-      await deleteROIFromAPI(selected.id, roi.id);
+  await deleteImageROI(imageId, roi.id, projectScope);
       
       // Remove overlay
       if (roi.overlay && osdViewerRef.current) {
@@ -741,7 +899,7 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
           </div>
 
           {/* Viewer with Zoom Controls Overlay */}
-          <div className="relative" style={{ height: 'calc(100vh - 280px)', minHeight: '480px' }}>
+          <div className="relative h-full" style={{ minHeight: '480px' }}>
             <div 
               ref={viewerRef}
               id="osd-viewer-container"

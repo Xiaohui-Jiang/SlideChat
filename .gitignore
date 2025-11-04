@@ -37,3 +37,10 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+
+# Large slide demo assets (keep locally only)
+server/public/slides/**/*.tif
+server/public/slides/**/*.TIF
+server/public/slides/**/*.tiff
+server/public/slides/**/*.TIFF
+server/public/slides/**/*.ome.tiff

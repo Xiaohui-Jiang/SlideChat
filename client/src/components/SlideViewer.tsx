@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { Rect, Slide, ROI } from '../types';
-import { fetchROIs, createROI, updateROIName, deleteROI } from '../lib/api';
+import { fetchROIs, createROI, updateROIName, deleteROI, DEFAULT_PROJECT_ID } from '../lib/api';
 
 type Props = {
   slides: Slide[];
@@ -14,6 +14,7 @@ export default function SlideViewer({ slides, selectedId, onSelect, onAnalyzeROI
     () => slides.find(s => s.id === selectedId) ?? slides[0],
     [slides, selectedId]
   );
+  const projectScope = selected?.projectId ?? DEFAULT_PROJECT_ID;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -45,9 +46,9 @@ export default function SlideViewer({ slides, selectedId, onSelect, onAnalyzeROI
     
     // Fetch ROIs for the selected slide
     if (selected?.id) {
-      fetchROIs(selected.id).then(setRois);
+      fetchROIs(selected.id, projectScope).then(setRois);
     }
-  }, [selected?.id]);
+  }, [selected?.id, projectScope]);
 
   function onWheel(e: React.WheelEvent) {
     e.preventDefault();
@@ -109,7 +110,7 @@ export default function SlideViewer({ slides, selectedId, onSelect, onAnalyzeROI
         h: currentDrawing.h / scale,
       };
       
-      const newROI = await createROI(selected.id, roiName, imageGeometry);
+  const newROI = await createROI(selected.id, roiName, imageGeometry, projectScope);
       setRois(prev => [...prev, newROI]);
       setCurrentDrawing(null);
       setShowNameDialog(false);
@@ -129,7 +130,7 @@ export default function SlideViewer({ slides, selectedId, onSelect, onAnalyzeROI
     if (!selected) return;
     
     try {
-      await deleteROI(selected.id, roi.id);
+  await deleteROI(selected.id, roi.id, projectScope);
       setRois(prev => prev.filter(r => r.id !== roi.id));
       if (selectedROI?.id === roi.id) {
         setSelectedROI(null);
@@ -143,7 +144,7 @@ export default function SlideViewer({ slides, selectedId, onSelect, onAnalyzeROI
     if (!selected) return;
     
     try {
-      await updateROIName(selected.id, roi.id, newName);
+  await updateROIName(selected.id, roi.id, newName, projectScope);
       setRois(prev => prev.map(r => r.id === roi.id ? { ...r, name: newName } : r));
     } catch (error) {
       console.error('Failed to rename ROI:', error);

@@ -1,6 +1,15 @@
 import type { Slide, ROI, Rect } from '../types';
 
 const API = '/api';
+export const DEFAULT_PROJECT_ID = 'default-project';
+
+const resolveProjectId = (projectId?: string) => projectId ?? DEFAULT_PROJECT_ID;
+
+const projectImageROIsEndpoint = (projectId: string, imageId: string) =>
+  `${API}/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(imageId)}/rois`;
+
+const projectImageROIEndpoint = (projectId: string, imageId: string, roiId: string) =>
+  `${projectImageROIsEndpoint(projectId, imageId)}/${encodeURIComponent(roiId)}`;
 
 async function safeFetch<T>(input: RequestInfo, init: RequestInit | undefined, mock: () => T): Promise<T> {
   try {
@@ -18,18 +27,24 @@ export async function fetchSlides(): Promise<Slide[]> {
     { method: 'GET' },
     () => [
       {
-        id: 'demo_he_tissue111111',
-        name: 'demo_he_tissue11111.jpg',
-        imageUrl: 'http://localhost:5050/public/slides/demo_he_tissue/demopic.jpg',
-        thumbnailUrl: 'http://localhost:5050/public/slides/demo_he_tissue/demopic.jpg',
+        id: 'xenium_human_kidney_he',
+        name: 'Xenium_V1_Human_Kidney_FFPE_Protein_updated_he_image.ome.tif',
+        projectId: DEFAULT_PROJECT_ID,
+        imageUrl: 'http://localhost:5050/public/slides/human_kidney/human_kidney_he_preview.jpg',
+        thumbnailUrl: 'http://localhost:5050/public/slides/human_kidney/thumbnail.jpg',
         sourceType: 'demo',
-        format: '.jpg',
+        format: '.ome.tif',
         metadata: {
           isBiologicalImage: true,
-          tissueType: 'intestinal',
+          tissueType: 'kidney',
           staining: 'H&E',
           magnification: '20x',
-          description: 'High-quality H&E stained tissue showing glandular structures and stromal components'
+          description: 'Xenium FFPE kidney morphology image from the provided Human_Kidney_test_data dataset',
+          pixelSize: { x: 0.2125, y: 0.2125, unit: 'µm' },
+          fileFormat: 'OME-TIFF',
+          roiAlignmentCsv: 'http://localhost:5050/public/data/human_kidney/Xenium_V1_Human_Kidney_FFPE_Protein_updated_he_imagealignment.csv',
+          source: 'Human_Kidney_test_data',
+          originalAssetPath: 'http://localhost:5050/public/slides/human_kidney/human_kidney_he.ome.tif'
         }
       },
     ]
@@ -101,16 +116,18 @@ export async function uploadSlideToServer(file: File) {
 }
 
 // ROI API functions
-export async function fetchROIs(slideId: string): Promise<ROI[]> {
+export async function fetchROIs(slideId: string, projectId?: string): Promise<ROI[]> {
+  const pid = resolveProjectId(projectId);
   return safeFetch<ROI[]>(
-    `${API}/slides/${slideId}/rois`,
+    projectImageROIsEndpoint(pid, slideId),
     { method: 'GET' },
     () => []
   );
 }
 
-export async function createROI(slideId: string, name: string, geometry: Rect): Promise<ROI> {
-  const res = await fetch(`${API}/slides/${slideId}/rois`, {
+export async function createROI(slideId: string, name: string, geometry: Rect, projectId?: string): Promise<ROI> {
+  const pid = resolveProjectId(projectId);
+  const res = await fetch(projectImageROIsEndpoint(pid, slideId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, geometry })
@@ -119,8 +136,9 @@ export async function createROI(slideId: string, name: string, geometry: Rect): 
   return (await res.json()) as ROI;
 }
 
-export async function updateROIName(slideId: string, roiId: string, name: string): Promise<ROI> {
-  const res = await fetch(`${API}/slides/${slideId}/rois/${roiId}`, {
+export async function updateROIName(slideId: string, roiId: string, name: string, projectId?: string): Promise<ROI> {
+  const pid = resolveProjectId(projectId);
+  const res = await fetch(projectImageROIEndpoint(pid, slideId, roiId), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name })
@@ -129,30 +147,25 @@ export async function updateROIName(slideId: string, roiId: string, name: string
   return (await res.json()) as ROI;
 }
 
-export async function deleteROI(slideId: string, roiId: string): Promise<void> {
-  const res = await fetch(`${API}/slides/${slideId}/rois/${roiId}`, {
+export async function deleteROI(slideId: string, roiId: string, projectId?: string): Promise<void> {
+  const pid = resolveProjectId(projectId);
+  const res = await fetch(projectImageROIEndpoint(pid, slideId, roiId), {
     method: 'DELETE'
   });
   if (!res.ok) throw new Error(`Delete ROI failed: ${res.status}`);
 }
 
 // Image-based ROI API functions (new structure)
-export async function fetchImageROIs(imageId: string): Promise<ROI[]> {
-  return safeFetch<ROI[]>(
-    `${API}/images/${imageId}/rois`,
-    { method: 'GET' },
-    () => []
-  );
+export async function fetchImageROIs(imageId: string, projectId?: string): Promise<ROI[]> {
+  return fetchROIs(imageId, projectId);
 }
 
-export async function createImageROI(imageId: string, name: string, geometry: Rect): Promise<ROI> {
-  const res = await fetch(`${API}/images/${imageId}/rois`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, geometry })
-  });
-  if (!res.ok) throw new Error(`Create ROI failed: ${res.status}`);
-  return (await res.json()) as ROI;
+export async function createImageROI(imageId: string, name: string, geometry: Rect, projectId?: string): Promise<ROI> {
+  return createROI(imageId, name, geometry, projectId);
+}
+
+export async function deleteImageROI(imageId: string, roiId: string, projectId?: string): Promise<void> {
+  return deleteROI(imageId, roiId, projectId);
 }
 
 // Biological image specific API functions
