@@ -1,0 +1,124 @@
+{
+  "id": "e0aa4811-ee34-461c-ae5a-8e23916a9505",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1761887976483
+  },
+  "createdAt": 1761887976494,
+  "updatedAt": 1761888004082,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "b3cf3be6-5e18-4c3f-9d46-49714b38109f",
+      "role": "user",
+      "content": "o i",
+      "name": null,
+      "metadata": {
+        "timestamp": 1761887976483
+      },
+      "createdAt": 1761887976494,
+      "tokenEstimate": 1
+    },
+    {
+      "id": "0d8f3fdc-b5c6-41c5-819b-69fe3418db65",
+      "role": "assistant",
+      "content": "It seems like your message might be incomplete or unclear. Could you please provide more details or clarify what you need assistance with regarding slide analysis or biological features?",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1761887978142,
+      "tokenEstimate": 47
+    },
+    {
+      "id": "a2bcb28e-7476-4aa8-a2f7-ffa809785a34",
+      "role": "user",
+      "content": "oi，你终于好了吗",
+      "name": null,
+      "metadata": {
+        "timestamp": 1761887980734
+      },
+      "createdAt": 1761887980739,
+      "tokenEstimate": 3
+    },
+    {
+      "id": "adc3c3c5-7f2a-427a-8763-eddf9b567c42",
+      "role": "assistant",
+      "content": "你好！我在这里帮助你进行生物切片分析或相关问题。请告诉我你需要什么帮助！",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1761887982035,
+      "tokenEstimate": 9
+    },
+    {
+      "id": "d0c847ad-a2a6-4557-bb7f-01b38d05060c",
+      "role": "user",
+      "content": "你会中文？",
+      "name": null,
+      "metadata": {
+        "timestamp": 1761887989514
+      },
+      "createdAt": 1761887989520,
+      "tokenEstimate": 2
+    },
+    {
+      "id": "7614ab4b-4bbf-45c8-b5b3-533eb1679d32",
+      "role": "assistant",
+      "content": "是的，我会中文！请问有什么我可以帮助你的吗？",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1761887990323,
+      "tokenEstimate": 6
+    },
+    {
+      "id": "45452629-f5c5-40e0-8ffb-cdfc18d92990",
+      "role": "user",
+      "content": "你是一个天昊",
+      "name": null,
+      "metadata": {
+        "timestamp": 1761887998418
+      },
+      "createdAt": 1761887998425,
+      "tokenEstimate": 2
+    },
+    {
+      "id": "2add0c90-8570-4659-9b7c-35f5e4753348",
+      "role": "assistant",
+      "content": "看起来你在提到“天昊”，但我不太明白具体的意思。如果你有任何问题或需要帮助的地方，请告诉我！",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1761887999399,
+      "tokenEstimate": 12
+    },
+    {
+      "id": "bae4daec-d504-4f97-b7b1-7d85a978f5c3",
+      "role": "user",
+      "content": "我刚刚说了什么",
+      "name": null,
+      "metadata": {
+        "timestamp": 1761888003050
+      },
+      "createdAt": 1761888003053,
+      "tokenEstimate": 2
+    },
+    {
+      "id": "ff9dbaa1-034e-4b89-887a-bd2318935016",
+      "role": "assistant",
+      "content": "你刚刚提到“你是一个天昊”。如果你想讨论这个话题或有其他问题，请告诉我！",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1761888004082,
+      "tokenEstimate": 9
+    }
+  ]
+}

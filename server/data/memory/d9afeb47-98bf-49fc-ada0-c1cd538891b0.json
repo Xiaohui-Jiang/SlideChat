@@ -1,0 +1,25 @@
+{
+  "id": "d9afeb47-98bf-49fc-ada0-c1cd538891b0",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1761886138238
+  },
+  "createdAt": 1761886138248,
+  "updatedAt": 1761886138248,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "b56fdd0a-7b44-4905-ab53-86d4b7a07346",
+      "role": "user",
+      "content": "咋说",
+      "name": null,
+      "metadata": {
+        "timestamp": 1761886138238
+      },
+      "createdAt": 1761886138248,
+      "tokenEstimate": 1
+    }
+  ]
+}

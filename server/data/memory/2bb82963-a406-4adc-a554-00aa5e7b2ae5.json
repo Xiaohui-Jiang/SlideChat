@@ -1,0 +1,80 @@
+{
+  "id": "2bb82963-a406-4adc-a554-00aa5e7b2ae5",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1760044525969
+  },
+  "createdAt": 1760044525977,
+  "updatedAt": 1760044569531,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "74cb84e8-1a36-46e3-9f3f-790caaccc9f8",
+      "role": "user",
+      "content": "tian",
+      "name": null,
+      "metadata": {
+        "timestamp": 1760044525969
+      },
+      "createdAt": 1760044525977,
+      "tokenEstimate": 1
+    },
+    {
+      "id": "b960b097-1dd5-43c1-b5ef-8b8803a2e568",
+      "role": "assistant",
+      "content": "It seems like your message might be incomplete or unclear. Could you please provide more details or clarify what you need assistance with regarding slide analysis, ROI creation, or biological features? I'm here to help!",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1760044527187,
+      "tokenEstimate": 55
+    },
+    {
+      "id": "8f2ca850-7385-438b-bb79-f6090af8bc7e",
+      "role": "user",
+      "content": "tianhao is a biological scientist, he loves doing some  research on pigs",
+      "name": null,
+      "metadata": {
+        "timestamp": 1760044552370
+      },
+      "createdAt": 1760044552373,
+      "tokenEstimate": 18
+    },
+    {
+      "id": "59454c19-3dd7-463f-a46f-cabce59926c6",
+      "role": "assistant",
+      "content": "That's great to hear! If Tianhao is conducting research on pigs and needs assistance with biological slide analysis, creating Regions of Interest (ROIs), or analyzing specific biological features, I can help with that.\n\nPlease let me know what specific tasks or analyses he would like to perform, such as retrieving slide information, creating ROIs, or analyzing biological features related to his research.",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1760044554571,
+      "tokenEstimate": 102
+    },
+    {
+      "id": "f6d4d121-bfd4-48cc-ae55-04335e6be0cd",
+      "role": "user",
+      "content": "what's tianhao's interest?",
+      "name": null,
+      "metadata": {
+        "timestamp": 1760044568388
+      },
+      "createdAt": 1760044568393,
+      "tokenEstimate": 7
+    },
+    {
+      "id": "7bccd27d-9af2-4c3b-a724-d4adb6fe3fa4",
+      "role": "assistant",
+      "content": "Based on your previous message, Tianhao is a biological scientist with an interest in conducting research on pigs. If you have more specific details about his research focus or any particular areas of interest within that field, please share, and I can provide more tailored information or assistance!",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1760044569531,
+      "tokenEstimate": 76
+    }
+  ]
+}

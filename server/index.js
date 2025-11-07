@@ -133,6 +133,86 @@ const conversationMemory = new ConversationMemoryStore({
 
 global.conversationMemory = conversationMemory;
 
+const AGENT_TIMEOUT_MS = (() => {
+  const parsed = Number(process.env.LANGCHAIN_AGENT_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15000;
+})();
+
+function buildFallbackReply(message = '') {
+  let contextualReply = 'I can help you analyze biological images and H&E stained tissue slides. ';
+  const normalizedMessage = typeof message === 'string' ? message.toLowerCase() : '';
+
+  if (normalizedMessage.includes('roi') || normalizedMessage.includes('region')) {
+    contextualReply +=
+      'For ROI analysis, I can help you:\n\n' +
+      '🔬 **H&E Tissue Analysis:**\n' +
+      '- Identify glandular structures and epithelial cells\n' +
+      '- Analyze stromal components and connective tissue\n' +
+      '- Quantify cell density in defined regions\n' +
+      '- Assess tissue architecture and morphology\n\n' +
+      '📊 **Available Functions:**\n' +
+      '- getSlideInfo: Get slide metadata and properties\n' +
+      '- analyzeBiologicalFeatures: Analyze cellular and tissue features\n' +
+      '- createROI: Create regions of interest for analysis\n' +
+      '- findSimilarSlides: Find similar tissue patterns';
+  } else if (normalizedMessage.includes('cd68') || normalizedMessage.includes('immune')) {
+    contextualReply +=
+      'For immune cell analysis:\n\n' +
+      '🧬 **Immune Infiltration Analysis:**\n' +
+      '- CD68+ macrophage identification and quantification\n' +
+      '- Spatial distribution of immune cells\n' +
+      '- Tissue infiltration patterns\n' +
+      '- Cell density calculations per ROI\n\n' +
+      '💡 **Tip:** Draw ROIs around areas of interest and I can provide detailed analysis of immune cell populations.';
+  } else {
+    contextualReply +=
+      "Here's what I can help you with:\n\n" +
+      '🔬 **Image Analysis:**\n' +
+      '- H&E stained tissue interpretation\n' +
+      '- Cellular morphology assessment\n' +
+      '- Tissue architecture analysis\n\n' +
+      '📐 **ROI Functions:**\n' +
+      '- Draw regions of interest on slides\n' +
+      '- Quantitative analysis of selected areas\n' +
+      '- Cell counting and density measurements\n\n' +
+      "💬 **Try asking:**\n" +
+      "- 'Analyze the tissue morphology in this ROI'\n" +
+      "- 'What cell types are visible in this region?'\n" +
+      "- 'Calculate cell density in ROI_1'";
+  }
+
+  return contextualReply;
+}
+
+function safeErrorMessage(error) {
+  if (!error) return 'Unknown error';
+  if (error instanceof Error) return error.message || 'Unknown error';
+  if (typeof error === 'string') return error || 'Unknown error';
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+async function invokeAgentWithTimeout(agentPromise, timeoutMs) {
+  let timeoutId;
+
+  try {
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`LangChain agent timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+
+    return await Promise.race([agentPromise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 // Initialize function registry and LangChain agent
 async function initializeServer() {
   try {
@@ -497,11 +577,11 @@ const updateROIRecord = (projectId, imageId, roiId, updates) => {
 
   const geometryUpdate = updates.geometry
     ? {
-        x: Number(updates.geometry.x ?? existing.geometry.x),
-        y: Number(updates.geometry.y ?? existing.geometry.y),
-        w: Number(updates.geometry.w ?? existing.geometry.w),
-        h: Number(updates.geometry.h ?? existing.geometry.h)
-      }
+      x: Number(updates.geometry.x ?? existing.geometry.x),
+      y: Number(updates.geometry.y ?? existing.geometry.y),
+      w: Number(updates.geometry.w ?? existing.geometry.w),
+      h: Number(updates.geometry.h ?? existing.geometry.h)
+    }
     : existing.geometry;
 
   const updated = {
@@ -695,10 +775,87 @@ app.get('/api/conversations/:conversationId', (req, res) => {
 
 // Enhanced chat endpoint with conversation memory integration
 app.post('/api/chat', async (req, res) => {
+  let currentConversationId = null;
+  let message = '';
+  let userId = 'anonymous';
+  let metadata = {};
+
+  const respondWithFallback = (error, source = 'enhanced_fallback') => {
+    const reply = buildFallbackReply(message);
+    const errorMessage = safeErrorMessage(error);
+
+    console.warn(
+      `🟡 Responding with fallback (source=${source}) for conversation ${currentConversationId || 'n/a'}:`,
+      errorMessage
+    );
+
+    if (currentConversationId) {
+      try {
+        conversationMemory.appendMessage(currentConversationId, {
+          role: 'assistant',
+          content: reply,
+          metadata: { source, error: errorMessage }
+        });
+      } catch (storageError) {
+        console.error(
+          `❗ Failed to store fallback response for conversation ${currentConversationId}:`,
+          storageError
+        );
+      }
+    }
+
+    try {
+      if (!res.headersSent) {
+        res.status(200).json({
+          conversationId: currentConversationId,
+          reply,
+          source,
+          demo_mode: true,
+          error: errorMessage
+        });
+      } else {
+        res.end();
+      }
+    } catch (responseError) {
+      console.error('❗ Failed to send fallback JSON response:', responseError);
+      if (!res.headersSent) {
+        try {
+          res.status(200);
+          res.setHeader('Content-Type', 'application/json');
+          res.send(
+            JSON.stringify({
+              conversationId: currentConversationId,
+              reply,
+              source,
+              demo_mode: true,
+              error: errorMessage
+            })
+          );
+        } catch (finalError) {
+          console.error('❗ Final attempt to send fallback response failed:', finalError);
+          if (!res.headersSent) {
+            res.status(500).send('Fallback response failed');
+          } else {
+            res.end();
+          }
+        }
+      }
+    }
+
+    return res;
+  };
+
   try {
     console.log('🔵 SERVER: Received chat request:', req.body);
 
-    const { message, conversationId, userId = 'anonymous', metadata = {} } = req.body || {};
+    const body = req.body || {};
+    message = body.message;
+    currentConversationId = body.conversationId || null;
+    userId = body.userId ?? 'anonymous';
+    metadata =
+      body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+        ? body.metadata
+        : {};
 
     if (!message || typeof message !== 'string' || !message.trim()) {
       return res.status(400).json({ error: 'Message is required' });
@@ -706,7 +863,6 @@ app.post('/api/chat', async (req, res) => {
 
     // Get or create conversation
     let conversation;
-    let currentConversationId = conversationId;
 
     if (currentConversationId) {
       conversation = conversationMemory.getConversation(currentConversationId);
@@ -721,60 +877,116 @@ app.post('/api/chat', async (req, res) => {
       console.log(`🆕 Created new conversation: ${currentConversationId}`);
     }
 
-    // Add user message to conversation
-    conversationMemory.appendMessage(currentConversationId, {
-      role: 'user',
-      content: message,
-      metadata
-    });
+    try {
+      conversationMemory.appendMessage(currentConversationId, {
+        role: 'user',
+        content: message,
+        metadata
+      });
+    } catch (storeError) {
+      console.error(
+        `❌ Failed to store user message for conversation ${currentConversationId}:`,
+        storeError
+      );
+      return respondWithFallback(storeError, 'memory_error');
+    }
 
-    // Get conversation context for LangChain
-    const context = conversationMemory.getContext(currentConversationId);
-    
+    let context;
+    try {
+      context = conversationMemory.getContext(currentConversationId);
+    } catch (contextError) {
+      console.error(
+        `❌ Failed to load conversation context for ${currentConversationId}:`,
+        contextError
+      );
+      return respondWithFallback(contextError, 'memory_error');
+    }
+
     // Convert messages to LangChain format
-    const chatHistory = context.messages.slice(-5).map(msg => {
-      try {
-        if (msg.role === 'user') {
-          return new HumanMessage(msg.content);
-        } else if (msg.role === 'assistant') {
-          return new AIMessage(msg.content);
+    const chatHistory = context.messages
+      .slice(-5)
+      .map(msg => {
+        try {
+          if (msg.role === 'user') {
+            return new HumanMessage(msg.content);
+          } else if (msg.role === 'assistant') {
+            return new AIMessage(msg.content);
+          }
+          return new SystemMessage(msg.content);
+        } catch (error) {
+          console.error('Error creating message:', error);
+          return new HumanMessage(msg.content || '');
         }
-        return new SystemMessage(msg.content);
-      } catch (error) {
-        console.error('Error creating message:', error);
-        return new HumanMessage(msg.content || '');
-      }
-    }).filter(Boolean);
+      })
+      .filter(Boolean);
 
     // Use LangChain agent with conversation context
     try {
       if (!global.langchainAgent) {
+        console.error('❌ LangChain agent is not initialized. Please ensure it is set up correctly.');
         throw new Error('LangChain agent not initialized');
       }
 
       console.log(`🤖 Using LangChain agent with ${chatHistory.length} context messages`);
 
-      const result = await global.langchainAgent.invoke({
+      const startTime = Date.now();
+      const agentPromise = global.langchainAgent.invoke({
         input: message,
         chat_history: chatHistory
       });
 
-      const agentReply = `${result.output ?? ''}`.trim();
-      const functionsUsed = result.steps?.map((step) => step.action?.tool).filter(Boolean) || [];
+      let result;
+      try {
+        result = await invokeAgentWithTimeout(agentPromise, AGENT_TIMEOUT_MS);
+      } catch (agentError) {
+        agentPromise
+          .then(lateResult => {
+            console.warn('🟠 LangChain agent resolved after timeout/error:', lateResult);
+          })
+          .catch(lateError => {
+            console.warn('🟠 LangChain agent rejection after primary handling:', lateError);
+          });
+        throw agentError;
+      }
 
-      // Add assistant response to conversation
-      conversationMemory.appendMessage(currentConversationId, {
-        role: 'assistant',
-        content: agentReply,
-        metadata: { functions_used: functionsUsed }
-      });
+      const endTime = Date.now();
+      console.log(`⏱️ LangChain agent response time: ${endTime - startTime}ms`);
 
-      // Try to summarize if needed
-      await conversationMemory.maybeSummarize(currentConversationId);
+      const agentReply = `${result?.output ?? ''}`.trim();
+      if (!agentReply) {
+        throw new Error('Agent returned an empty response');
+      }
+
+      const steps = Array.isArray(result?.steps) ? result.steps : [];
+      const functionsUsed = steps
+        .map(step => step?.action?.tool)
+        .filter(tool => typeof tool === 'string' && tool.length > 0);
+
+      try {
+        conversationMemory.appendMessage(currentConversationId, {
+          role: 'assistant',
+          content: agentReply,
+          metadata: { functions_used: functionsUsed }
+        });
+      } catch (storeAssistantError) {
+        console.error(
+          `❗ Failed to store agent response for conversation ${currentConversationId}:`,
+          storeAssistantError
+        );
+      }
+
+      try {
+        await conversationMemory.maybeSummarize(currentConversationId);
+      } catch (summaryError) {
+        console.warn(
+          `⚠️ Conversation summarization skipped for ${currentConversationId}:`,
+          summaryError
+        );
+      }
 
       console.log('✅ LangChain agent response:', agentReply);
 
-      res.json({
+      return res.json({
         conversationId: currentConversationId,
         reply: agentReply,
         source: 'langchain',
@@ -784,70 +996,11 @@ app.post('/api/chat', async (req, res) => {
     } catch (error) {
       console.error('❌ LangChain agent error:', error);
       console.log('🔵 SERVER: Using enhanced fallback response');
-
-      let contextualReply = 'I can help you analyze biological images and H&E stained tissue slides. ';
-      const normalizedMessage = message.toLowerCase();
-
-      if (normalizedMessage.includes('roi') || normalizedMessage.includes('region')) {
-        contextualReply +=
-          'For ROI analysis, I can help you:\n\n' +
-          '🔬 **H&E Tissue Analysis:**\n' +
-          '- Identify glandular structures and epithelial cells\n' +
-          '- Analyze stromal components and connective tissue\n' +
-          '- Quantify cell density in defined regions\n' +
-          '- Assess tissue architecture and morphology\n\n' +
-          '📊 **Available Functions:**\n' +
-          '- getSlideInfo: Get slide metadata and properties\n' +
-          '- analyzeBiologicalFeatures: Analyze cellular and tissue features\n' +
-          '- createROI: Create regions of interest for analysis\n' +
-          '- findSimilarSlides: Find similar tissue patterns';
-      } else if (normalizedMessage.includes('cd68') || normalizedMessage.includes('immune')) {
-        contextualReply +=
-          'For immune cell analysis:\n\n' +
-          '🧬 **Immune Infiltration Analysis:**\n' +
-          '- CD68+ macrophage identification and quantification\n' +
-          '- Spatial distribution of immune cells\n' +
-          '- Tissue infiltration patterns\n' +
-          '- Cell density calculations per ROI\n\n' +
-          '💡 **Tip:** Draw ROIs around areas of interest and I can provide detailed analysis of immune cell populations.';
-      } else {
-        contextualReply +=
-          "Here's what I can help you with:\n\n" +
-          '🔬 **Image Analysis:**\n' +
-          '- H&E stained tissue interpretation\n' +
-          '- Cellular morphology assessment\n' +
-          '- Tissue architecture analysis\n\n' +
-          '📐 **ROI Functions:**\n' +
-          '- Draw regions of interest on slides\n' +
-          '- Quantitative analysis of selected areas\n' +
-          '- Cell counting and density measurements\n\n' +
-          "💬 **Try asking:**\n" +
-          "- 'Analyze the tissue morphology in this ROI'\n" +
-          "- 'What cell types are visible in this region?'\n" +
-          "- 'Calculate cell density in ROI_1'";
-      }
-
-      // Add fallback message to conversation
-      conversationMemory.appendMessage(currentConversationId, {
-        role: 'assistant',
-        content: contextualReply,
-        metadata: { source: 'fallback', error: error.message }
-      });
-
-      res.json({
-        conversationId: currentConversationId,
-        reply: contextualReply,
-        source: 'enhanced_fallback',
-        demo_mode: true,
-        error: error.message
-      });
+      return respondWithFallback(error, 'enhanced_fallback');
     }
-  } catch (serverError) {
-    console.error('❌ Chat endpoint error:', serverError);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: serverError.message
-    });
+  } catch (error) {
+    console.error('❌ Unexpected error in /api/chat:', error);
+    return respondWithFallback(error, 'server_error');
   }
 });
 
@@ -976,8 +1129,8 @@ app.post('/api/roi/process', async (req, res) => {
     }
 
     if (!roiPolygon || !Array.isArray(roiPolygon) || roiPolygon.length < 3) {
-      return res.status(400).json({ 
-        error: 'roiPolygon must be an array of at least 3 [x, y] coordinates' 
+      return res.status(400).json({
+        error: 'roiPolygon must be an array of at least 3 [x, y] coordinates'
       });
     }
 
@@ -996,9 +1149,9 @@ app.post('/api/roi/process', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('[ROI API] Error processing ROI:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to process ROI',
-      message: error.message 
+      message: error.message
     });
   }
 });
@@ -1019,9 +1172,9 @@ app.get('/api/roi/:slideId', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('[ROI API] Error retrieving ROI result:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to retrieve ROI result',
-      message: error.message 
+      message: error.message
     });
   }
 });
@@ -1033,7 +1186,7 @@ app.get('/api/roi/:slideId', async (req, res) => {
 app.get('/api/roi/:slideId/overlay.png', (req, res) => {
   const { slideId } = req.params;
   const imagePath = path.join(process.cwd(), 'data', 'roi_results', slideId, 'roi_overlay.png');
-  
+
   if (!fs.existsSync(imagePath)) {
     return res.status(404).json({ error: 'Overlay image not found' });
   }
@@ -1048,7 +1201,7 @@ app.get('/api/roi/:slideId/overlay.png', (req, res) => {
 app.get('/api/roi/:slideId/data.h5ad', (req, res) => {
   const { slideId } = req.params;
   const dataPath = path.join(process.cwd(), 'data', 'roi_results', slideId, 'annotated_data.h5ad');
-  
+
   if (!fs.existsSync(dataPath)) {
     return res.status(404).json({ error: 'Annotated data not found' });
   }
@@ -1063,7 +1216,7 @@ app.get('/api/roi/:slideId/data.h5ad', (req, res) => {
 app.get('/api/roi/:slideId/polygon.json', (req, res) => {
   const { slideId } = req.params;
   const polygonPath = path.join(process.cwd(), 'data', 'roi_results', slideId, 'roi_polygon.json');
-  
+
   if (!fs.existsSync(polygonPath)) {
     return res.status(404).json({ error: 'ROI polygon not found' });
   }

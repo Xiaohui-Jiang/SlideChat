@@ -1,0 +1,21 @@
+{
+  "id": "24c4a309-3ce6-43bb-a986-27cc8d1dba49",
+  "userId": "diag",
+  "metadata": {},
+  "createdAt": 1760713952678,
+  "updatedAt": 1760713952678,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "597074b1-af0c-4ac0-a075-c2c4436a36d3",
+      "role": "user",
+      "content": "test connection",
+      "name": null,
+      "metadata": {},
+      "createdAt": 1760713952678,
+      "tokenEstimate": 4
+    }
+  ]
+}

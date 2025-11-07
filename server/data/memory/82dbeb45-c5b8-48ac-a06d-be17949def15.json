@@ -1,0 +1,25 @@
+{
+  "id": "82dbeb45-c5b8-48ac-a06d-be17949def15",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1761887090507
+  },
+  "createdAt": 1761887090520,
+  "updatedAt": 1761887090521,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "c9fb767f-e6ab-473a-a5d7-1713e2e9d802",
+      "role": "user",
+      "content": "为啥",
+      "name": null,
+      "metadata": {
+        "timestamp": 1761887090507
+      },
+      "createdAt": 1761887090521,
+      "tokenEstimate": 1
+    }
+  ]
+}

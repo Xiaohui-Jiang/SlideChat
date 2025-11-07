@@ -164,6 +164,15 @@ The Vite configuration handles:
 - **Proxy**: API calls to backend (`/api/*` → `http://localhost:5050`)
 - **Port**: Development server port (3000)
 - **Build**: Production optimizations
+- **API Base URL**: Use `VITE_API_BASE_URL` when serving the frontend from a domain that cannot proxy `/api` to the backend.
+
+Create a `client/.env.local` file and add:
+
+```
+VITE_API_BASE_URL=http://localhost:5050/api
+```
+
+Adjust the host and protocol to match your backend deployment.
 
 ## 📡 API Endpoints
 

@@ -1,0 +1,25 @@
+{
+  "id": "750d73c1-9bd5-436e-8dc0-e75f994cc6d7",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1761885107681
+  },
+  "createdAt": 1761885107695,
+  "updatedAt": 1761885107696,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "d1b5a1d4-19c0-467e-b752-000c426ad4e6",
+      "role": "user",
+      "content": "oi",
+      "name": null,
+      "metadata": {
+        "timestamp": 1761885107681
+      },
+      "createdAt": 1761885107696,
+      "tokenEstimate": 1
+    }
+  ]
+}

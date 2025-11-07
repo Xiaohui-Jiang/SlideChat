@@ -1,0 +1,25 @@
+{
+  "id": "4b00c27e-8460-4565-9463-59b42e448adf",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1761887357467
+  },
+  "createdAt": 1761887357478,
+  "updatedAt": 1761887357478,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "bad65e3f-645a-4677-9788-7b74aa8e0103",
+      "role": "user",
+      "content": "解决问题",
+      "name": null,
+      "metadata": {
+        "timestamp": 1761887357467
+      },
+      "createdAt": 1761887357478,
+      "tokenEstimate": 1
+    }
+  ]
+}

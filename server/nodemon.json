@@ -1,0 +1,16 @@
+{
+  "watch": [
+    "index.js",
+    "lib",
+    "routes",
+    "config"
+  ],
+  "ext": "js,mjs,cjs,json",
+  "ignore": [
+    "data/**",
+    "public/**",
+    "uploads/**",
+    "server_logs/**",
+    "node_modules/**"
+  ]
+}

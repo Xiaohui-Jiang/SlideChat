@@ -1,0 +1,25 @@
+{
+  "id": "0f1d24dd-5843-4706-91dc-9c6da9c1a1df",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1761884813011
+  },
+  "createdAt": 1761884813027,
+  "updatedAt": 1761884813027,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "629965bf-754a-44cf-9ad8-363210b88b01",
+      "role": "user",
+      "content": "hello, what are you doing",
+      "name": null,
+      "metadata": {
+        "timestamp": 1761884813011
+      },
+      "createdAt": 1761884813027,
+      "tokenEstimate": 7
+    }
+  ]
+}

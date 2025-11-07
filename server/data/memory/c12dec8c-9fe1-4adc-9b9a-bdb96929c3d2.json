@@ -1,0 +1,25 @@
+{
+  "id": "c12dec8c-9fe1-4adc-9b9a-bdb96929c3d2",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1760713880349
+  },
+  "createdAt": 1760713880359,
+  "updatedAt": 1760713880360,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "f65a9923-ff3f-4144-8ca2-e0a7d9cfac58",
+      "role": "user",
+      "content": "Please analyze ROI \"ROI_1\" on demo_he_tissue11111.jpg: x=289, y=214, w=217, h=129.\n- Quantify CD68-positive cell density within the ROI.\n- Summarize spatial immune infiltration patterns.",
+      "name": null,
+      "metadata": {
+        "timestamp": 1760713880349
+      },
+      "createdAt": 1760713880360,
+      "tokenEstimate": 47
+    }
+  ]
+}

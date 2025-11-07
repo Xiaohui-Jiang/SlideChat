@@ -1,0 +1,25 @@
+{
+  "id": "50adf8f3-b534-45c8-bcfc-acfb5d542a57",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1760651714004
+  },
+  "createdAt": 1760651714024,
+  "updatedAt": 1760651714025,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "b9caca5e-42f6-4934-846c-2b8971c94493",
+      "role": "user",
+      "content": "who is the best biologist before 2000s?",
+      "name": null,
+      "metadata": {
+        "timestamp": 1760651714004
+      },
+      "createdAt": 1760651714025,
+      "tokenEstimate": 10
+    }
+  ]
+}

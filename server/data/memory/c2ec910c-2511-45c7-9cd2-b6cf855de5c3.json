@@ -1,0 +1,21 @@
+{
+  "id": "c2ec910c-2511-45c7-9cd2-b6cf855de5c3",
+  "userId": "anonymous",
+  "metadata": {},
+  "createdAt": 1761887800262,
+  "updatedAt": 1761887800262,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "30ba88b0-320b-4055-80a8-f41fa3b33bad",
+      "role": "user",
+      "content": "ping",
+      "name": null,
+      "metadata": {},
+      "createdAt": 1761887800262,
+      "tokenEstimate": 1
+    }
+  ]
+}

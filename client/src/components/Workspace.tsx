@@ -293,7 +293,16 @@ export const Workspace: React.FC = () => {
       }
     } catch (error) {
       console.error('Chat error:', error);
-      addLog('error', 'Chat request failed');
+      const message =
+        error instanceof Error ? error.message : 'Chat request failed';
+      addLog('error', message);
+      const assistantMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: `Warning: ${message}`,
+        ts: Date.now()
+      };
+      setMessages(prev => [...prev, assistantMsg]);
     } finally {
       setLoading(false);
     }

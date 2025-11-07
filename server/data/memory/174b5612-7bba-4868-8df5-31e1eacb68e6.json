@@ -1,0 +1,32 @@
+{
+  "id": "174b5612-7bba-4868-8df5-31e1eacb68e6",
+  "userId": "anonymous",
+  "metadata": {},
+  "createdAt": 1761887969604,
+  "updatedAt": 1761887970581,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "236ae0ea-ad58-4209-9064-df4d78a20a4a",
+      "role": "user",
+      "content": "ping",
+      "name": null,
+      "metadata": {},
+      "createdAt": 1761887969604,
+      "tokenEstimate": 1
+    },
+    {
+      "id": "6e6d0776-9857-4898-9d23-ad025b9a7275",
+      "role": "assistant",
+      "content": "It seems like you're testing the connection. How can I assist you with slide analysis or biological features today?",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1761887970581,
+      "tokenEstimate": 29
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 // client/src/lib/langchain-api.ts
 
+import { resolveApiUrl } from './httpConfig';
+
 export interface LangChainFunction {
   name: string;
   description: string;
@@ -41,10 +43,18 @@ export interface ExamplesResponse {
  * LangChain API integration for frontend
  */
 export class LangChainAPI {
-  private baseUrl: string;
+  private readonly baseUrl: string;
 
   constructor(baseUrl: string = '/api') {
     this.baseUrl = baseUrl;
+  }
+
+  private buildUrl(path: string): string {
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      return path;
+    }
+    const normalized = path.startsWith('/') ? path : `/${path}`;
+    return resolveApiUrl(`${this.baseUrl === '/api' ? '' : this.baseUrl}${normalized}`);
   }
 
   /**
@@ -52,7 +62,7 @@ export class LangChainAPI {
    */
   async getFunctions(): Promise<LangChainFunction[]> {
     try {
-      const response = await fetch(`${this.baseUrl}/functions`);
+      const response = await fetch(this.buildUrl('/functions'));
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -68,7 +78,7 @@ export class LangChainAPI {
    */
   async executeFunction(functionName: string, input: any): Promise<FunctionExecutionResult> {
     try {
-      const response = await fetch(`${this.baseUrl}/functions/${functionName}/execute`, {
+      const response = await fetch(this.buildUrl(`/functions/${functionName}/execute`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -92,7 +102,7 @@ export class LangChainAPI {
    */
   async chat(message: string, context?: any): Promise<ChatResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/chat`, {
+      const response = await fetch(this.buildUrl('/chat'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -116,7 +126,7 @@ export class LangChainAPI {
    */
   async getExamples(): Promise<ExamplesResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/examples`);
+      const response = await fetch(this.buildUrl('/examples'));
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
