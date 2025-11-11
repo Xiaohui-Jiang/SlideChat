@@ -1,0 +1,36 @@
+{
+  "id": "10db4d13-ce34-4335-b968-17f015569851",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1762535243756
+  },
+  "createdAt": 1762535243777,
+  "updatedAt": 1762535247669,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "1d212d40-736d-47c5-90b3-453748e2472e",
+      "role": "user",
+      "content": "111",
+      "name": null,
+      "metadata": {
+        "timestamp": 1762535243756
+      },
+      "createdAt": 1762535243777,
+      "tokenEstimate": 1
+    },
+    {
+      "id": "d69a6e96-87ca-422c-ac2c-6cd02a0bb097",
+      "role": "assistant",
+      "content": "It seems like your message might have been sent in error or is incomplete. Could you please provide more details or clarify what you need assistance with regarding slide analysis or biological features?",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1762535247669,
+      "tokenEstimate": 51
+    }
+  ]
+}
