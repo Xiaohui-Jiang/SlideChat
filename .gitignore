@@ -50,11 +50,21 @@ Human_Kidney_test_data/
 tmp_celltyping_api/
 server/tmp/
 server/uploads/
+
+# Generated project artifacts (tiles, processed data)
 server/data/projects/*/tiles/
 server/data/projects/*/processed/*.h5ad
 server/data/projects/*/processed/*.dzi
-server/data/projects/*/uploads/
+
+# But keep demo project metadata and source files
+!server/data/projects/229092fc-61dc-45b7-b8d2-e8da30a918eb/project.json
+!server/data/projects/229092fc-61dc-45b7-b8d2-e8da30a918eb/files/
+!server/data/projects/229092fc-61dc-45b7-b8d2-e8da30a918eb/rois/
+
+# Job queue and runtime state
 server/data/jobs/
+
+# Python cache
 server/lib/__pycache__/
 *.pyc
 __pycache__/
