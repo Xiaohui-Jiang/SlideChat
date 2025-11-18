@@ -1,4 +1,14 @@
-import type { Slide, ROI, Rect } from '../types';
+import type {
+  Slide,
+  ROI,
+  Rect,
+  Project,
+  Image,
+  ProjectRequirements,
+  ProjectFileMetadata,
+  ProjectImageStatus,
+  ImagePipelineState
+} from '../types';
 
 const API = '/api';
 export const DEFAULT_PROJECT_ID = 'default-project';
@@ -11,43 +21,233 @@ const projectImageROIsEndpoint = (projectId: string, imageId: string) =>
 const projectImageROIEndpoint = (projectId: string, imageId: string, roiId: string) =>
   `${projectImageROIsEndpoint(projectId, imageId)}/${encodeURIComponent(roiId)}`;
 
-async function safeFetch<T>(input: RequestInfo, init: RequestInit | undefined, mock: () => T): Promise<T> {
+interface ServerProjectImage {
+  id: string;
+  label?: string;
+  files?: Record<string, ProjectFileMetadata>;
+  status?: ProjectImageStatus;
+  processed?: Record<string, unknown> | null;
+  pipeline?: ImagePipelineState;
+  dziManifestUrl?: string | null;
+  dziTileBaseUrl?: string | null;
+  assetVersion?: number | null;
+}
+
+interface ServerProject {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: number;
+  updatedAt?: number;
+  images?: Record<string, ServerProjectImage>;
+}
+
+interface ProjectRequirementsResponse {
+  required: string[];
+  optional: string[];
+  images: ServerProjectImage[];
+}
+
+type UploadPayload = {
+  projectId: string;
+  imageId: string;
+  fileType: string;
+  file: File;
+  label?: string;
+};
+
+async function safeFetch<T>(
+  input: RequestInfo,
+  init?: RequestInit,
+  mock?: () => T
+): Promise<T> {
   try {
     const res = await fetch(input, init);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as T;
-  } catch {
-    return mock();
+    if (!res.ok) {
+      const error = new Error(`HTTP ${res.status}`);
+      // Attach response for debugging
+      (error as any).status = res.status;
+      throw error;
+    }
+    const text = await res.text();
+    return (text ? JSON.parse(text) : null) as T;
+  } catch (error) {
+    if (mock) {
+      return mock();
+    }
+    throw error;
   }
 }
 
-export async function fetchSlides(): Promise<Slide[]> {
-  return safeFetch<Slide[]>(
-    `${API}/slides`,
-    { method: 'GET' },
-    () => [
-      {
-        id: 'xenium_human_kidney_he',
-        name: 'Xenium_V1_Human_Kidney_FFPE_Protein_updated_he_image.ome.tif',
-        projectId: DEFAULT_PROJECT_ID,
-        imageUrl: 'http://localhost:5050/public/slides/human_kidney/human_kidney_he_preview.jpg',
-        thumbnailUrl: 'http://localhost:5050/public/slides/human_kidney/thumbnail.jpg',
-        sourceType: 'demo',
-        format: '.ome.tif',
-        metadata: {
-          isBiologicalImage: true,
-          tissueType: 'kidney',
-          staining: 'H&E',
-          magnification: '20x',
-          description: 'Xenium FFPE kidney morphology image from the provided Human_Kidney_test_data dataset',
-          pixelSize: { x: 0.2125, y: 0.2125, unit: 'µm' },
-          fileFormat: 'OME-TIFF',
-          roiAlignmentCsv: 'http://localhost:5050/public/data/human_kidney/Xenium_V1_Human_Kidney_FFPE_Protein_updated_he_imagealignment.csv',
-          source: 'Human_Kidney_test_data',
-          originalAssetPath: 'http://localhost:5050/public/slides/human_kidney/human_kidney_he.ome.tif'
+const extractExtension = (filename: string | undefined) => {
+  if (!filename) return undefined;
+  const match = filename.match(/(\.[^./\\]+)$/);
+  return match ? match[1].toLowerCase() : undefined;
+};
+
+const projectImageBaseUrl = (projectId: string, imageId: string) =>
+  `${API}/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(imageId)}`;
+
+const mapServerImageToClient = (projectId: string, image: ServerProjectImage): Image => {
+  const imageFile = image.files?.image;
+  const baseUrl = projectImageBaseUrl(projectId, image.id);
+  const assetVersion = image.assetVersion ?? image.status?.processedAt ?? imageFile?.uploadedAt ?? null;
+  const cacheSuffix = assetVersion ? `?v=${assetVersion}` : '';
+  const dziManifestUrl =
+    image.dziManifestUrl ?? (imageFile ? `${baseUrl}/dzi/manifest.dzi${cacheSuffix}` : null);
+  const dziTileBaseUrl = image.dziTileBaseUrl ?? (imageFile ? `${baseUrl}/dzi` : null);
+
+  return {
+    id: image.id,
+    name: image.label || image.id,
+    label: image.label || image.id,
+    dziManifestUrl,
+    dziTileBaseUrl,
+  assetVersion,
+    sourceType: 'uploaded',
+    projectId,
+    format: extractExtension(imageFile?.originalName),
+    files: image.files,
+    status: image.status,
+    processed: image.processed ?? null,
+    pipeline: image.pipeline,
+    metadata: imageFile
+      ? {
+          fileSize: imageFile.size,
+          fileFormat: extractExtension(imageFile.originalName)?.replace('.', '').toUpperCase()
         }
-      },
-    ]
+      : undefined
+  };
+};
+
+const mapServerProjectToClient = (project: ServerProject): Project => ({
+  id: project.id,
+  name: project.name,
+  description: project.description,
+  createdAt: project.createdAt,
+  updatedAt: project.updatedAt,
+  imageIds: Object.keys(project.images ?? {})
+});
+
+export async function fetchProjects(): Promise<Project[]> {
+  const projects = await safeFetch<ServerProject[]>(`${API}/projects`, { method: 'GET' }, () => []);
+  return projects.map(mapServerProjectToClient);
+}
+
+export async function createProjectOnServer(name: string, description?: string): Promise<Project> {
+  const body = JSON.stringify({ name, description });
+  const project = await safeFetch<ServerProject>(
+    `${API}/projects`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body
+    },
+    undefined
+  );
+  return mapServerProjectToClient(project);
+}
+
+export async function deleteProjectOnServer(projectId: string): Promise<void> {
+  await safeFetch<null>(
+    `${API}/projects/${encodeURIComponent(projectId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+export async function fetchProjectRequirements(projectId: string): Promise<{
+  requirements: ProjectRequirements;
+  images: Image[];
+}> {
+  const { required, optional, images } = await safeFetch<ProjectRequirementsResponse>(
+    `${API}/projects/${encodeURIComponent(projectId)}/requirements`,
+    { method: 'GET' }
+  );
+
+  return {
+    requirements: { required, optional },
+    images: (images || []).map((img) => mapServerImageToClient(projectId, img))
+  };
+}
+
+export async function fetchProjectImages(projectId: string): Promise<Image[]> {
+  const images = await safeFetch<ServerProjectImage[]>(
+    `${API}/projects/${encodeURIComponent(projectId)}/images`,
+    { method: 'GET' },
+    () => []
+  );
+  return images.map((img) => mapServerImageToClient(projectId, img));
+}
+
+export async function fetchProjectImage(projectId: string, imageId: string): Promise<Image> {
+  const image = await safeFetch<ServerProjectImage>(
+    `${API}/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(imageId)}`,
+    { method: 'GET' }
+  );
+  return mapServerImageToClient(projectId, image);
+}
+
+export async function uploadProjectFile({
+  projectId,
+  imageId,
+  fileType,
+  file,
+  label
+}: UploadPayload) {
+  console.log('📤 Client: Uploading file:', { projectId, imageId, fileType, fileName: file.name, fileSize: file.size });
+  
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('fileType', fileType);
+  if (label) {
+    formData.append('label', label);
+  }
+
+  try {
+    const result = await safeFetch(
+      `${API}/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(imageId)}/files`,
+      {
+        method: 'POST',
+        body: formData
+      }
+    );
+    console.log('✅ Client: Upload successful:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ Client: Upload failed:', error);
+    throw error;
+  }
+}
+
+export async function deleteProjectFile({
+  projectId,
+  imageId,
+  fileType
+}: {
+  projectId: string;
+  imageId: string;
+  fileType: string;
+}) {
+  return safeFetch(
+    `${API}/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(imageId)}/files/${encodeURIComponent(fileType)}`,
+    {
+      method: 'DELETE'
+    }
+  );
+}
+
+export async function deleteProjectImage({
+  projectId,
+  imageId
+}: {
+  projectId: string;
+  imageId: string;
+}): Promise<void> {
+  await safeFetch(
+    `${API}/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(imageId)}`,
+    {
+      method: 'DELETE'
+    }
   );
 }
 
@@ -118,11 +318,24 @@ export async function uploadSlideToServer(file: File) {
 // ROI API functions
 export async function fetchROIs(slideId: string, projectId?: string): Promise<ROI[]> {
   const pid = resolveProjectId(projectId);
-  return safeFetch<ROI[]>(
-    projectImageROIsEndpoint(pid, slideId),
-    { method: 'GET' },
-    () => []
-  );
+  try {
+    return await safeFetch<ROI[]>(
+      projectImageROIsEndpoint(pid, slideId),
+      { method: 'GET' },
+      () => []
+    );
+  } catch (error) {
+    const status = (error as any)?.status;
+    if (status === 404) {
+      console.warn(`ROI data not found for image ${slideId} (project ${pid}); returning empty list.`);
+      return [];
+    }
+    if (status === 409) {
+      console.warn(`ROI data unavailable (processing required) for image ${slideId} (project ${pid}); returning empty list.`);
+      return [];
+    }
+    throw error;
+  }
 }
 
 export async function createROI(slideId: string, name: string, geometry: Rect, projectId?: string): Promise<ROI> {

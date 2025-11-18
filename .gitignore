@@ -44,3 +44,20 @@ server/public/slides/**/*.TIF
 server/public/slides/**/*.tiff
 server/public/slides/**/*.TIFF
 server/public/slides/**/*.ome.tiff
+
+# Test data and generated files (runtime artifacts)
+Human_Kidney_test_data/
+tmp_celltyping_api/
+server/tmp/
+server/uploads/
+server/data/projects/*/tiles/
+server/data/projects/*/processed/*.h5ad
+server/data/projects/*/processed/*.dzi
+server/data/projects/*/uploads/
+server/data/jobs/
+server/lib/__pycache__/
+*.pyc
+__pycache__/
+
+# Vite metadata
+client/node_modules/.vite/

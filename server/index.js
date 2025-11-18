@@ -2,11 +2,9 @@
 // Enhanced server with LangChain integration - toy example
 import express from 'express';
 import cors from 'cors';
-import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
-import sharp from 'sharp';
 
 // Import LangChain tools
 import {
@@ -20,7 +18,32 @@ import { createToolCallingAgent, AgentExecutor } from 'langchain/agents';
 import { ChatPromptTemplate, MessagesPlaceholder } from '@langchain/core/prompts';
 import { HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages';
 import ConversationMemoryStore from './lib/conversation-memory.js';
-import { processROI, getROIResult } from './lib/roi-processor.js';
+import xeniumRoutes from './routes/xenium.js';
+import XeniumService from './lib/xeniumService.js';
+import projectsRouter from './routes/projects.js';
+import uploadRouter from './routes/upload.js';
+import {
+  getProjectPaths,
+  listImages as listProjectImages,
+  getImage as getProjectImage,
+  listRois as listStoredRois,
+  listProjects,
+  upsertRoi as storeRoiMetadata,
+  deleteRoi as removeRoiMetadata,
+  updateRoiJob,
+  updatePreprocessJob,
+  getRoi as getStoredRoi,
+  getImageWithFiles,
+  markProcessed
+} from './lib/projectStore.js';
+import {
+  initializeJobQueue,
+  registerJobProcessor,
+  enqueueJob,
+  RetryableJobError,
+  listJobs,
+  registerPendingWorkRequestHandler
+} from './lib/jobQueue.js';
 
 // Load environment variables
 dotenv.config();
@@ -29,69 +52,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use('/public', express.static(path.join(process.cwd(), 'public')));
-
-const upload = multer({ dest: path.join(process.cwd(), 'uploads') });
-
-const HUMAN_KIDNEY_DIR = path.join(process.cwd(), 'public', 'slides', 'human_kidney');
-const HUMAN_KIDNEY_DATASET_DIR = path.resolve(process.cwd(), '..', 'Human_Kidney_test_data');
-
-async function ensureKidneySlideAssets() {
-  try {
-    if (!fs.existsSync(HUMAN_KIDNEY_DIR)) {
-      fs.mkdirSync(HUMAN_KIDNEY_DIR, { recursive: true });
-    }
-
-    if (!fs.existsSync(HUMAN_KIDNEY_DATASET_DIR)) {
-      console.warn('⚠️ Human kidney dataset directory not found, skipping preview generation');
-      return;
-    }
-
-    const files = fs.readdirSync(HUMAN_KIDNEY_DATASET_DIR);
-    const tiffName = files.find((name) => /\.tiff?$/.test(name.toLowerCase()));
-
-    if (!tiffName) {
-      console.warn('⚠️ No TIFF found in Human_Kidney_test_data, skipping preview generation');
-      return;
-    }
-
-    const sourceTiff = path.join(HUMAN_KIDNEY_DATASET_DIR, tiffName);
-    const previewPath = path.join(HUMAN_KIDNEY_DIR, 'human_kidney_he_preview.jpg');
-    const thumbnailPath = path.join(HUMAN_KIDNEY_DIR, 'thumbnail.jpg');
-    const symlinkPath = path.join(HUMAN_KIDNEY_DIR, 'human_kidney_he.ome.tif');
-
-    if (!fs.existsSync(symlinkPath)) {
-      try {
-        fs.symlinkSync(sourceTiff, symlinkPath);
-      } catch (error) {
-        console.warn('⚠️ Failed to create symlink to original TIFF:', error.message);
-      }
-    }
-
-    const sharpSource = sharp(sourceTiff, { limitInputPixels: false });
-
-    if (!fs.existsSync(previewPath)) {
-      console.log('🖼️ Generating kidney preview JPEG (this may take a minute)...');
-      await sharpSource
-        .clone()
-        .resize({ width: 8000, withoutEnlargement: true })
-        .jpeg({ quality: 85 })
-        .toFile(previewPath);
-      console.log('✅ Kidney preview generated at', previewPath);
-    }
-
-    if (!fs.existsSync(thumbnailPath)) {
-      console.log('🖼️ Generating kidney thumbnail...');
-      await sharpSource
-        .clone()
-        .resize({ width: 600, withoutEnlargement: true })
-        .jpeg({ quality: 75 })
-        .toFile(thumbnailPath);
-      console.log('✅ Kidney thumbnail generated at', thumbnailPath);
-    }
-  } catch (error) {
-    console.warn('⚠️ Failed to prepare kidney slide assets:', error.message);
-  }
-}
+app.use('/api/projects', projectsRouter);
+app.use('/api/upload', uploadRouter);
+app.use('/api/xenium', xeniumRoutes);
 
 const SUMMARY_MODEL =
   process.env.OPENAI_SUMMARY_MODEL ||
@@ -273,206 +236,824 @@ If you need to analyze multiple aspects or perform complex workflows, you can ca
   }
 }
 
-// Enhanced upload endpoint for biological images
-app.post('/api/upload', upload.single('file'), async (req, res) => {
-  try {
-    const file = req.file;
-    if (!file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+// Project-scoped biological data is managed under /api/projects
+
+// ROI endpoints backed by project-specific Xenium pipeline ------------------
+const ROI_NAME_PREFIX = 'roi';
+
+const sanitizeRoiName = (value, fallback) => {
+  if (typeof value === 'string') {
+    const cleaned = value.trim();
+    if (cleaned.length > 0) {
+      return cleaned.replace(/[^A-Za-z0-9_-]/g, '_');
     }
-
-    const id = path.parse(file.originalname).name.replace(/\W+/g, '_') + '_' + Date.now();
-    const fileExt = path.extname(file.originalname).toLowerCase();
-    const isStandardImage = (file.mimetype || '').startsWith('image/');
-    const isBiologicalFormat = ['.svs', '.tif', '.tiff', '.ndpi', '.vsi', '.scn'].includes(fileExt);
-
-    const outDir = path.join(process.cwd(), 'public', 'slides', id);
-    fs.mkdirSync(outDir, { recursive: true });
-
-    let imageUrl, thumbnailUrl, metadata = {};
-
-    if (isStandardImage) {
-      // Handle standard image formats (PNG, JPG, etc.)
-      const dest = path.join(outDir, file.originalname);
-      fs.renameSync(file.path, dest);
-      imageUrl = `/public/slides/${id}/${file.originalname}`;
-      thumbnailUrl = imageUrl;
-
-      console.log(`📷 Standard image uploaded: ${file.originalname}`);
-    } else if (isBiologicalFormat) {
-      // Handle biological image formats (SVS, TIF, etc.)
-      const dest = path.join(outDir, file.originalname);
-      fs.renameSync(file.path, dest);
-
-      // For now, create a placeholder preview
-      // In production, you'd use tools like OpenSlide, VIPS, or similar
-      imageUrl = `/public/slides/${id}/${file.originalname}`;
-      thumbnailUrl = `https://picsum.photos/seed/${id}/240/180`;
-
-      // Extract basic metadata
-      const stats = fs.statSync(dest);
-      metadata = {
-        fileSize: stats.size,
-        format: fileExt,
-        uploadedAt: Date.now(),
-        isBiologicalImage: true,
-        needsProcessing: true
-      };
-
-      console.log(`🔬 Biological image uploaded: ${file.originalname} (${fileExt})`);
-      console.log(`📊 File size: ${(stats.size / (1024 * 1024)).toFixed(2)} MB`);
-    } else {
-      // Unsupported format
-      fs.unlinkSync(file.path);
-      return res.status(400).json({
-        error: `Unsupported file format: ${fileExt}. Supported formats: JPG, PNG, TIF, SVS, NDPI, VSI, SCN`
-      });
-    }
-
-    const result = {
-      id,
-      name: file.originalname,
-      imageUrl,
-      thumbnailUrl,
-      sourceType: 'uploaded',
-      format: fileExt,
-      metadata
-    };
-
-    res.json(result);
-  } catch (error) {
-    console.error('Upload error:', error);
-    res.status(500).json({ error: 'Upload failed' });
   }
-});
+  return fallback;
+};
 
-// Sample biological slides endpoint
-app.get('/api/slides', (req, res) => {
-  res.json([
-    {
-      id: 'xenium_human_kidney_he',
-      name: 'Xenium_V1_Human_Kidney_FFPE_Protein_updated_he_image.ome.tif',
-      imageUrl: '/public/slides/human_kidney/human_kidney_he_preview.jpg',
-      thumbnailUrl: '/public/slides/human_kidney/thumbnail.jpg',
-      sourceType: 'dataset',
-      format: '.ome.tif',
-      metadata: {
-        isBiologicalImage: true,
-        tissueType: 'kidney',
-        staining: 'H&E',
-        magnification: '20x',
-        description: 'Xenium FFPE kidney morphology image from the provided Human_Kidney_test_data dataset',
-        pixelSize: { x: 0.2125, y: 0.2125, unit: 'µm' },
-        fileFormat: 'OME-TIFF',
-        roiAlignmentCsv: '/public/data/human_kidney/Xenium_V1_Human_Kidney_FFPE_Protein_updated_he_imagealignment.csv',
-        source: 'Human_Kidney_test_data',
-        originalAssetPath: '/public/slides/human_kidney/human_kidney_he.ome.tif'
-      }
-    },
-    {
-      id: 'xenium_renal_he',
-      name: 'Xenium_HE.ome.tiff',
-      imageUrl: 'https://picsum.photos/seed/xenium-renal-he/1600/1200',
-      thumbnailUrl: 'https://picsum.photos/seed/xenium-renal-he/240/180',
-      sourceType: 'demo',
-      format: '.tiff',
-      metadata: {
-        isBiologicalImage: true,
-        tissueType: 'kidney',
-        staining: 'H&E',
-        magnification: '20x'
-      }
-    },
-    {
-      id: 'xenium_protein',
-      name: 'Xenium_protein.ome.tiff',
-      imageUrl: 'https://picsum.photos/seed/xenium-protein/1600/1200',
-      thumbnailUrl: 'https://picsum.photos/seed/xenium-protein/240/180',
-      sourceType: 'demo',
-      format: '.tiff',
-      metadata: {
-        isBiologicalImage: true,
-        tissueType: 'kidney',
-        staining: 'Protein',
-        channels: ['DAPI', 'CD68', 'CD3']
-      }
-    },
-    {
-      id: 'lung_svs_sample',
-      name: 'lung_sample.svs',
-      imageUrl: 'https://picsum.photos/seed/lung-svs/1600/1200',
-      thumbnailUrl: 'https://picsum.photos/seed/lung-svs/240/180',
-      sourceType: 'demo',
-      format: '.svs',
-      metadata: {
-        isBiologicalImage: true,
-        tissueType: 'lung',
-        staining: 'H&E',
-        scanner: 'Aperio'
-      }
+const toFiniteNumber = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const rectangleToPolygon = (geometry) => {
+  if (!geometry || typeof geometry !== 'object') return null;
+  const x = toFiniteNumber(geometry.x);
+  const y = toFiniteNumber(geometry.y);
+  const w = toFiniteNumber(geometry.w);
+  const h = toFiniteNumber(geometry.h);
+  if ([x, y, w, h].some((val) => val === null)) return null;
+  return [
+    [x, y],
+    [x + w, y],
+    [x + w, y + h],
+    [x, y + h]
+  ];
+};
+
+const normalizeVertices = ({ vertices, geometry }) => {
+  if (Array.isArray(vertices) && vertices.length >= 3) {
+    const parsed = vertices
+      .map((point) => {
+        if (!Array.isArray(point) || point.length < 2) return null;
+        const x = toFiniteNumber(point[0]);
+        const y = toFiniteNumber(point[1]);
+        if (x === null || y === null) return null;
+        return [x, y];
+      })
+      .filter(Boolean);
+    if (parsed.length >= 3) {
+      return parsed;
     }
-  ]);
-});
+  }
+  return rectangleToPolygon(geometry);
+};
 
-// Biological image metadata endpoint
-app.get('/api/images/:imageId/metadata', (req, res) => {
-  const { imageId } = req.params;
+const polygonToGeometry = (polygon) => {
+  if (!Array.isArray(polygon) || polygon.length === 0) return null;
+  const xs = polygon.map((point) => Number(point[0]));
+  const ys = polygon.map((point) => Number(point[1]));
+  if (xs.some((n) => !Number.isFinite(n)) || ys.some((n) => !Number.isFinite(n))) {
+    return null;
+  }
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const maxX = Math.max(...xs);
+  const maxY = Math.max(...ys);
+  return {
+    x: minX,
+    y: minY,
+    w: maxX - minX,
+    h: maxY - minY
+  };
+};
 
-  // In a real implementation, this would read metadata from the actual file
-  const mockMetadata = {
-    id: imageId,
-    dimensions: { width: 46000, height: 32914 },
-    pixelSize: { x: 0.25, y: 0.25, unit: 'µm' },
-    magnification: '20x',
-    channels: ['DAPI', 'FITC', 'TRITC', 'Cy5'],
-    tissueType: 'kidney',
-    staining: 'Immunofluorescence',
-    acquisitionDate: '2024-10-01T10:30:00Z',
-    scanner: 'Xenium Analyzer',
-    fileFormat: 'OME-TIFF',
-    fileSize: '2.3 GB',
-    pyramidLevels: 6
+const createProjectXeniumService = (projectId) => {
+  const { filesDir, processedDir } = getProjectPaths(projectId);
+  return new XeniumService(filesDir, processedDir);
+};
+
+const JOB_TYPES = {
+  PREPROCESS_IMAGE: 'preprocess-image',
+  APPLY_ROI: 'apply-roi'
+};
+
+let pendingWorkTimer = null;
+
+async function ensureJobQueueInitialized() {
+  await initializeJobQueue({ pollIntervalMs: 1500 });
+  registerJobProcessor(processJob);
+  schedulePendingWork(0);
+}
+
+function buildRequiredFileSet(imageEntry) {
+  const files = imageEntry?.files || {};
+  return {
+    matrix_path: files.matrix?.path || null,
+    cells_path: files.cells?.path || null,
+    alignment_path: files.alignment?.path || null,
+    image_path: files.image?.path || null
+  };
+}
+
+function validateRequiredFiles(fileSet) {
+  const missing = Object.entries(fileSet)
+    .filter(([, value]) => !value)
+    .map(([key]) => key);
+  return missing;
+}
+
+async function finalizePreprocessArtifacts({ projectId, imageId, result }) {
+  const { processedDir } = getProjectPaths(projectId, imageId);
+  const targetPath = path.join(processedDir, `${imageId}.h5ad`);
+  const reportedPath = result?.h5ad_path || path.join(processedDir, `${imageId}_processed.h5ad`);
+
+  try {
+    if (reportedPath !== targetPath) {
+      if (fs.existsSync(targetPath)) {
+        await fs.promises.unlink(targetPath);
+      }
+      await fs.promises.copyFile(reportedPath, targetPath);
+    } else if (!fs.existsSync(targetPath)) {
+      throw new Error(`Processed h5ad not found at ${targetPath}`);
+    }
+  } catch (error) {
+    throw new Error(`Failed to prepare processed dataset: ${error.message}`);
+  }
+
+  return targetPath;
+}
+
+async function processPreprocessJob(job) {
+  const { projectId, imageId } = job.payload;
+  const imageEntry = await getImageWithFiles(projectId, imageId);
+  const fileSet = buildRequiredFileSet(imageEntry);
+  const missing = validateRequiredFiles(fileSet);
+  if (missing.length > 0) {
+    throw new RetryableJobError(`Waiting for required uploads: ${missing.join(', ')}`, 5000);
+  }
+
+  await updatePreprocessJob({ projectId, imageId, jobId: job.id, status: 'processing' });
+
+  const service = createProjectXeniumService(projectId);
+  const command = {
+    matrix_path: fileSet.matrix_path,
+    cells_path: fileSet.cells_path,
+    alignment_path: fileSet.alignment_path,
+    image_path: fileSet.image_path
   };
 
-  res.json(mockMetadata);
-});
+  const result = await service.preprocessDataset(imageId, command);
+  if (!result?.success) {
+    throw new Error(result?.error || 'Preprocessing failed');
+  }
 
-// Biological image processing status
-app.get('/api/images/:imageId/processing-status', (req, res) => {
-  const { imageId } = req.params;
+  const h5adPath = await finalizePreprocessArtifacts({ projectId, imageId, result });
+  await markProcessed({
+    projectId,
+    imageId,
+    processedMeta: {
+      h5adPath,
+      cellCount: result?.n_cells ?? null,
+      featureCount: result?.n_features ?? null,
+      generatedAt: Date.now()
+    }
+  });
 
-  // Mock processing status
-  res.json({
-    id: imageId,
+  await updatePreprocessJob({ projectId, imageId, jobId: job.id, status: 'completed' });
+}
+
+async function syncProcessedDataset({ projectId, imageId, reason = 'roi-update' }) {
+  try {
+    const { processedDir, h5adPath } = getProjectPaths(projectId, imageId);
+    const sourcePath = path.join(processedDir, `${imageId}_processed.h5ad`);
+
+    try {
+      await fs.promises.access(sourcePath);
+    } catch (accessError) {
+      console.warn(`⚠️ Processed dataset not found for sync (${reason}):`, {
+        projectId,
+        imageId,
+        sourcePath,
+        message: accessError?.message
+      });
+      return false;
+    }
+
+    await fs.promises.copyFile(sourcePath, h5adPath);
+    return true;
+  } catch (error) {
+    console.error(`❗ Failed to sync processed dataset (${reason}) for ${projectId}/${imageId}:`, error);
+    return false;
+  }
+}
+
+async function ensurePipelineDatasetAvailable(projectId, imageId) {
+  const h5adPath = ensureProcessedDataset(projectId, imageId);
+  const { processedDir } = getProjectPaths(projectId, imageId);
+  const pythonPath = path.join(processedDir, `${imageId}_processed.h5ad`);
+
+  let needsCopy = false;
+  try {
+    const stats = await fs.promises.stat(pythonPath);
+    if (!stats.isFile() || stats.size === 0) {
+      needsCopy = true;
+    }
+  } catch (error) {
+    needsCopy = true;
+  }
+
+  if (needsCopy) {
+    await fs.promises.copyFile(h5adPath, pythonPath);
+  }
+
+  return pythonPath;
+}
+
+async function processApplyRoiJob(job) {
+  const { projectId, imageId, roiName, polygon, geometry } = job.payload;
+  const imageEntry = await getProjectImage(projectId, imageId);
+  if (!imageEntry.status?.processed) {
+    throw new RetryableJobError('Processed dataset not ready yet', 6000);
+  }
+
+  await updateRoiJob({
+    projectId,
+    imageId,
+    roiName,
+    jobId: job.id,
+    status: 'processing',
+    error: null
+  });
+
+  const service = createProjectXeniumService(projectId);
+  const result = await applyPipelineAdd({ projectId, imageId, roiName, vertices: polygon });
+
+  await updateRoiJob({
+    projectId,
+    imageId,
+    roiName,
     status: 'completed',
-    progress: 100,
-    thumbnailReady: true,
-    pyramidReady: true,
-    analysisReady: true,
-    lastUpdated: Date.now()
+    error: null,
+    stats: {
+      n_cells: result?.n_cells_in_roi ?? null,
+      percentage: result?.percentage ?? null,
+      n_cells_total: result?.n_cells_total ?? null
+    },
+    polygon: result?.roi_polygon_pixels || polygon,
+    polygon_centroids: result?.roi_polygon_centroids || []
   });
+
+  // Persist a simplified ROI payload for API consumers
+  await storeRoiMetadata({
+    projectId,
+    imageId,
+    roiName,
+    payload: {
+      geometry,
+      polygon: result?.roi_polygon_pixels || polygon,
+      polygon_centroids: result?.roi_polygon_centroids || [],
+      stats: {
+        n_cells: result?.n_cells_in_roi ?? null,
+        percentage: result?.percentage ?? null,
+        n_cells_total: result?.n_cells_total ?? null
+      },
+      status: 'completed',
+      error: null,
+      jobId: job.id
+    }
+  });
+
+  await syncProcessedDataset({ projectId, imageId, reason: 'roi-add' });
+}
+
+async function processJob(job) {
+  try {
+    switch (job.type) {
+      case JOB_TYPES.PREPROCESS_IMAGE:
+        await processPreprocessJob(job);
+        break;
+      case JOB_TYPES.APPLY_ROI:
+        await processApplyRoiJob(job);
+        break;
+      default:
+        console.warn(`⚠️ Unknown job type: ${job.type}`);
+        break;
+    }
+    schedulePendingWork(500);
+  } catch (error) {
+    if (!error.retryable) {
+      if (job.type === JOB_TYPES.APPLY_ROI) {
+        const { projectId, imageId, roiName } = job.payload;
+        await updateRoiJob({
+          projectId,
+          imageId,
+          roiName,
+          status: 'failed',
+          error: error?.message || 'ROI processing failed'
+        });
+      } else if (job.type === JOB_TYPES.PREPROCESS_IMAGE) {
+        const { projectId, imageId } = job.payload;
+        await updatePreprocessJob({ projectId, imageId, jobId: job.id, status: 'failed' });
+      }
+    }
+    throw error;
+  }
+}
+
+async function queuePreprocessJob(projectId, imageId) {
+  const job = await enqueueJob(JOB_TYPES.PREPROCESS_IMAGE, { projectId, imageId });
+  await updatePreprocessJob({ projectId, imageId, jobId: job.id, status: 'queued' });
+  return job;
+}
+
+async function queueRoiJob({ projectId, imageId, roiName, geometry, polygon }) {
+  const job = await enqueueJob(JOB_TYPES.APPLY_ROI, { projectId, imageId, roiName, geometry, polygon });
+  await updateRoiJob({ projectId, imageId, roiName, jobId: job.id, status: 'queued', error: null });
+  return job;
+}
+
+function schedulePendingWork(delay = 1000) {
+  if (pendingWorkTimer) {
+    return;
+  }
+  pendingWorkTimer = setTimeout(async () => {
+    pendingWorkTimer = null;
+    try {
+      await discoverPendingWork();
+    } catch (error) {
+      console.error('Failed to discover pending work:', error);
+    }
+  }, delay);
+}
+
+registerPendingWorkRequestHandler((delay = 1000) => {
+  schedulePendingWork(delay);
 });
 
-// Get supported biological formats
-app.get('/api/supported-formats', (req, res) => {
-  res.json({
-    biologicalFormats: [
-      { extension: '.svs', description: 'Aperio SVS whole slide images', scanner: 'Aperio' },
-      { extension: '.tif', description: 'Tagged Image File Format', scanner: 'Various' },
-      { extension: '.tiff', description: 'Tagged Image File Format', scanner: 'Various' },
-      { extension: '.ome.tiff', description: 'OME-TIFF biological images', scanner: 'Various' },
-      { extension: '.ndpi', description: 'Hamamatsu NDPI', scanner: 'Hamamatsu' },
-      { extension: '.vsi', description: 'Olympus VSI', scanner: 'Olympus' },
-      { extension: '.scn', description: 'Leica SCN', scanner: 'Leica' }
-    ],
-    standardFormats: [
-      { extension: '.jpg', description: 'JPEG images' },
-      { extension: '.jpeg', description: 'JPEG images' },
-      { extension: '.png', description: 'PNG images' },
-      { extension: '.bmp', description: 'Bitmap images' }
-    ]
+async function discoverPendingWork() {
+  const jobs = listJobs();
+  const activeJobIds = new Set(
+    jobs
+      .filter((job) => job.status === 'queued' || job.status === 'processing')
+      .map((job) => job.id)
+  );
+
+  const projects = await listProjects();
+  for (const project of projects) {
+    const images = await listProjectImages(project.id);
+    for (const image of images) {
+      const readyForPreprocess = image.status?.ready && !image.status?.processed;
+      const preprocessJobId = image.pipeline?.preprocess?.jobId;
+      const preprocessActive = preprocessJobId && activeJobIds.has(preprocessJobId);
+      if (readyForPreprocess && !preprocessActive) {
+        await queuePreprocessJob(project.id, image.id);
+      }
+
+      const rois = await listStoredRois(project.id, image.id);
+      for (const roi of rois) {
+        const needsProcessing = !roi.status || roi.status === 'pending' || roi.status === 'failed';
+        const queued = roi.status === 'queued';
+        const roiActive = roi.jobId && activeJobIds.has(roi.jobId);
+        if ((needsProcessing || (queued && !roiActive)) && roi.geometry) {
+          const polygon = Array.isArray(roi.polygon) && roi.polygon.length >= 3 ? roi.polygon : rectangleToPolygon(roi.geometry);
+          await queueRoiJob({
+            projectId: project.id,
+            imageId: image.id,
+            roiName: roi.name,
+            geometry: roi.geometry,
+            polygon
+          });
+        }
+      }
+    }
+  }
+}
+
+const ensureProcessedDataset = (projectId, imageId) => {
+  const { h5adPath } = getProjectPaths(projectId, imageId);
+  if (!fs.existsSync(h5adPath)) {
+    const error = new Error('Processed dataset not available for this image');
+    error.statusCode = 409;
+    error.details = {
+      action: 'preprocess_required',
+      message: 'Upload required files and run preprocessing to generate the project h5ad.'
+    };
+    throw error;
+  }
+  return h5adPath;
+};
+
+const handlePipelineError = (error) => {
+  if (error && typeof error.statusCode === 'number') {
+    return error;
+  }
+  const wrapped = new Error(typeof error === 'string' ? error : error?.message || 'Unexpected error');
+  wrapped.statusCode = 500;
+  return wrapped;
+};
+
+const fetchPipelineRois = async ({ projectId, imageId }) => {
+  await ensurePipelineDatasetAvailable(projectId, imageId);
+  const service = createProjectXeniumService(projectId);
+  const result = await service.getROIList(imageId);
+  if (!result.success) {
+    const err = new Error(result.error || result.message || 'Failed to load ROI list');
+    err.statusCode = result.error === 'Dataset not found' ? 404 : 500;
+    throw err;
+  }
+  return result;
+};
+
+const applyPipelineAdd = async ({ projectId, imageId, roiName, vertices }) => {
+  await ensurePipelineDatasetAvailable(projectId, imageId);
+  const service = createProjectXeniumService(projectId);
+  const result = await service.addROI(imageId, roiName, vertices);
+  if (!result.success) {
+    const err = new Error(result.error || result.message || 'Failed to add ROI');
+    err.statusCode = 400;
+    throw err;
+  }
+  return result;
+};
+
+const applyPipelineDelete = async ({ projectId, imageId, roiName }) => {
+  await ensurePipelineDatasetAvailable(projectId, imageId);
+  const service = createProjectXeniumService(projectId);
+  const result = await service.deleteROI(imageId, roiName);
+  if (!result.success) {
+    const err = new Error(result.error || result.message || 'Failed to delete ROI');
+    err.statusCode = 400;
+    throw err;
+  }
+  return result;
+};
+
+const buildRoiPayload = ({
+  projectId,
+  imageId,
+  roiName,
+  polygon,
+  stats,
+  stored,
+  pipelineCentroids,
+  pipelineTotals,
+  defaultStatus = 'pending'
+}) => {
+  const geometry = polygonToGeometry(polygon) || stored?.geometry || { x: 0, y: 0, w: 0, h: 0 };
+  const status = stored?.status || defaultStatus;
+  return {
+    id: roiName,
+    name: roiName,
+    projectId,
+    imageId,
+    geometry,
+    polygon,
+    polygon_centroids: pipelineCentroids || stored?.polygon_centroids || [],
+    stats: {
+      n_cells: stats?.n_cells ?? stored?.stats?.n_cells ?? 0,
+      n_cells_total: stats?.n_cells_total ?? stored?.stats?.n_cells_total ?? pipelineTotals ?? null,
+      percentage: stats?.percentage ?? stored?.stats?.percentage ?? 0
+    },
+    status,
+    jobId: stored?.jobId || null,
+    error: stored?.error || null,
+    createdAt: stored?.createdAt || Date.now(),
+    updatedAt: Date.now()
+  };
+};
+
+const persistRoi = async ({ projectId, imageId, roi }) => {
+  await storeRoiMetadata({
+    projectId,
+    imageId,
+    roiName: roi.name,
+    payload: {
+      geometry: roi.geometry,
+      polygon: roi.polygon,
+      polygon_centroids: roi.polygon_centroids,
+      stats: roi.stats,
+      status: roi.status || 'completed',
+      error: roi.error || null,
+      jobId: roi.jobId || null
+    }
   });
-});
+};
+
+const listRoiHandler = async (req, res) => {
+  const { projectId, imageId } = req.params;
+
+  if (!projectId || !imageId) {
+    return res.status(400).json({ error: 'projectId and imageId are required' });
+  }
+
+  try {
+    const stored = await listStoredRois(projectId, imageId);
+    const storedMap = new Map(stored.map((roi) => [roi.name, roi]));
+    const rois = [];
+
+    let datasetReady = false;
+    let pipelineResult = null;
+
+    try {
+      ensureProcessedDataset(projectId, imageId);
+      datasetReady = true;
+      pipelineResult = await fetchPipelineRois({ projectId, imageId });
+    } catch (error) {
+      if (error?.statusCode === 404 || error?.statusCode === 409) {
+        datasetReady = false;
+      } else {
+        datasetReady = false;
+        console.warn(`⚠️ ROI pipeline unavailable for ${projectId}/${imageId}:`, error?.message || error);
+      }
+    }
+
+    if (datasetReady && pipelineResult?.rois) {
+      for (const roi of pipelineResult.rois) {
+        const storedEntry = storedMap.get(roi.name) || null;
+        const polygon = roi.polygon_pixels || storedEntry?.polygon || [];
+        rois.push(
+          buildRoiPayload({
+            projectId,
+            imageId,
+            roiName: roi.name,
+            polygon,
+            stats: {
+              n_cells: roi.n_cells,
+              percentage: roi.percentage,
+              n_cells_total: pipelineResult.n_cells_total
+            },
+            stored: storedEntry,
+            pipelineCentroids: roi.polygon_centroids,
+            pipelineTotals: pipelineResult.n_cells_total,
+            defaultStatus: 'completed'
+          })
+        );
+        if (storedEntry) {
+          storedMap.delete(roi.name);
+        }
+      }
+    }
+
+    for (const storedEntry of storedMap.values()) {
+      const polygon = Array.isArray(storedEntry.polygon) && storedEntry.polygon.length >= 3
+        ? storedEntry.polygon
+        : rectangleToPolygon(storedEntry.geometry);
+
+      const shouldForceCompleted = !datasetReady && (!storedEntry.status || ['pending', 'queued', 'processing'].includes(storedEntry.status));
+      const normalizedStatus = shouldForceCompleted ? 'completed' : storedEntry.status;
+      const normalizedStored = shouldForceCompleted
+        ? { ...storedEntry, status: 'completed', error: null }
+        : storedEntry;
+
+      rois.push(
+        buildRoiPayload({
+          projectId,
+          imageId,
+          roiName: storedEntry.name,
+          polygon: polygon || [],
+          stats: normalizedStored.stats || {},
+          stored: normalizedStored,
+          pipelineCentroids: normalizedStored.polygon_centroids || [],
+          pipelineTotals: normalizedStored.stats?.n_cells_total ?? null,
+          defaultStatus: shouldForceCompleted ? 'completed' : normalizedStored.status || 'completed'
+        })
+      );
+    }
+
+    res.json(rois);
+  } catch (error) {
+    const wrapped = handlePipelineError(error);
+    res.status(wrapped.statusCode).json({ error: wrapped.message, details: wrapped.details || null });
+  }
+};
+
+const createRoiHandler = async (req, res) => {
+  const { projectId, imageId } = req.params;
+  const body = req.body || {};
+  const roiName = sanitizeRoiName(body.name, `${ROI_NAME_PREFIX}_${Date.now()}`);
+  const vertices = normalizeVertices({ vertices: body.vertices, geometry: body.geometry });
+
+  if (!projectId || !imageId) {
+    return res.status(400).json({ error: 'projectId and imageId are required' });
+  }
+
+  if (!Array.isArray(vertices) || vertices.length < 3) {
+    return res.status(400).json({ error: 'ROI requires at least 3 vertices or valid rectangle geometry' });
+  }
+
+  try {
+    const geometryRect = polygonToGeometry(vertices) || body.geometry || { x: 0, y: 0, w: 0, h: 0 };
+
+    let datasetReady = true;
+    try {
+      ensureProcessedDataset(projectId, imageId);
+    } catch (datasetError) {
+      if (datasetError?.statusCode === 404 || datasetError?.statusCode === 409) {
+        datasetReady = false;
+      } else {
+        throw datasetError;
+      }
+    }
+
+    const storedPayload = {
+      geometry: geometryRect,
+      polygon: vertices,
+      status: datasetReady ? 'pending' : 'completed',
+      error: null,
+      stats: null,
+      jobId: null,
+      polygon_centroids: []
+    };
+
+    await storeRoiMetadata({
+      projectId,
+      imageId,
+      roiName,
+      payload: storedPayload
+    });
+
+    if (!datasetReady) {
+      const stored = await getStoredRoi({ projectId, imageId, roiName });
+      const roi = buildRoiPayload({
+        projectId,
+        imageId,
+        roiName,
+        polygon: stored?.polygon || vertices,
+        stats: stored?.stats || {},
+        stored: stored ? { ...stored, status: stored.status || 'completed' } : null,
+        pipelineCentroids: stored?.polygon_centroids || [],
+        pipelineTotals: stored?.stats?.n_cells_total ?? null,
+        defaultStatus: 'completed'
+      });
+
+      return res.status(201).json(roi);
+    }
+
+    await queueRoiJob({ projectId, imageId, roiName, geometry: geometryRect, polygon: vertices });
+    schedulePendingWork(500);
+
+    const stored = await getStoredRoi({ projectId, imageId, roiName });
+    const roi = buildRoiPayload({
+      projectId,
+      imageId,
+      roiName,
+      polygon: stored?.polygon || vertices,
+      stats: stored?.stats || {},
+      stored,
+      pipelineCentroids: stored?.polygon_centroids || [],
+      pipelineTotals: stored?.stats?.n_cells_total ?? null,
+      defaultStatus: stored?.status || 'pending'
+    });
+
+    res.status(202).json(roi);
+  } catch (error) {
+    const wrapped = handlePipelineError(error);
+    res.status(wrapped.statusCode).json({ error: wrapped.message, details: wrapped.details || null });
+  }
+};
+
+const updateRoiHandler = async (req, res) => {
+  const { projectId, imageId, roiId } = req.params;
+  const body = req.body || {};
+
+  if (!projectId || !imageId) {
+    return res.status(400).json({ error: 'projectId and imageId are required' });
+  }
+
+  const currentName = sanitizeRoiName(roiId || body.currentName || body.name, null);
+  const requestedName = sanitizeRoiName(body.name, currentName || `${ROI_NAME_PREFIX}_${Date.now()}`);
+  const hasGeometryUpdate = Array.isArray(body.vertices) || body.geometry;
+
+  if (!currentName && !hasGeometryUpdate) {
+    return res.status(400).json({ error: 'ROI name is required' });
+  }
+
+  try {
+    ensureProcessedDataset(projectId, imageId);
+
+    if (hasGeometryUpdate) {
+      const vertices = normalizeVertices({ vertices: body.vertices, geometry: body.geometry });
+      if (!Array.isArray(vertices) || vertices.length < 3) {
+        return res.status(400).json({ error: 'ROI requires at least 3 vertices or valid rectangle geometry' });
+      }
+
+      const pipelineResult = await applyPipelineAdd({ projectId, imageId, roiName: requestedName, vertices });
+      if (currentName && requestedName !== currentName) {
+        await applyPipelineDelete({ projectId, imageId, roiName: currentName });
+        await removeRoiMetadata({ projectId, imageId, roiName: currentName });
+      }
+
+      const roi = buildRoiPayload({
+        projectId,
+        imageId,
+        roiName: requestedName,
+        polygon: pipelineResult.roi_polygon_pixels || vertices,
+        stats: {
+          n_cells: pipelineResult.n_cells_in_roi,
+          percentage: pipelineResult.percentage,
+          n_cells_total: pipelineResult.n_cells_total
+        },
+        stored: null,
+        pipelineCentroids: pipelineResult.roi_polygon_centroids,
+        defaultStatus: 'completed'
+      });
+
+      await persistRoi({ projectId, imageId, roi });
+      return res.json(roi);
+    }
+
+    const pipelineResult = await fetchPipelineRois({ projectId, imageId });
+    const existing = (pipelineResult.rois || []).find((roi) => roi.name === currentName);
+    if (!existing) {
+      return res.status(404).json({ error: 'ROI not found' });
+    }
+
+    if (requestedName === currentName) {
+      const stored = (await listStoredRois(projectId, imageId)).find((roi) => roi.name === currentName) || null;
+      const polygon = existing.polygon_pixels || stored?.polygon || [];
+      const roi = buildRoiPayload({
+        projectId,
+        imageId,
+        roiName: currentName,
+        polygon,
+        stats: {
+          n_cells: existing.n_cells,
+          percentage: existing.percentage,
+          n_cells_total: pipelineResult.n_cells_total
+        },
+        stored,
+        pipelineCentroids: existing.polygon_centroids,
+        pipelineTotals: pipelineResult.n_cells_total,
+        defaultStatus: stored?.status || 'completed'
+      });
+      return res.json(roi);
+    }
+
+    const polygon = existing.polygon_pixels;
+    if (!Array.isArray(polygon) || polygon.length < 3) {
+      return res.status(400).json({ error: 'ROI polygon data is unavailable for rename' });
+    }
+
+    const pipelineResultNew = await applyPipelineAdd({ projectId, imageId, roiName: requestedName, vertices: polygon });
+    await applyPipelineDelete({ projectId, imageId, roiName: currentName });
+    await removeRoiMetadata({ projectId, imageId, roiName: currentName });
+
+    const roi = buildRoiPayload({
+      projectId,
+      imageId,
+      roiName: requestedName,
+      polygon: pipelineResultNew.roi_polygon_pixels || polygon,
+      stats: {
+        n_cells: pipelineResultNew.n_cells_in_roi,
+        percentage: pipelineResultNew.percentage,
+        n_cells_total: pipelineResultNew.n_cells_total
+      },
+      stored: null,
+      pipelineCentroids: pipelineResultNew.roi_polygon_centroids,
+      defaultStatus: 'completed'
+    });
+
+    await persistRoi({ projectId, imageId, roi });
+    res.json(roi);
+  } catch (error) {
+    const wrapped = handlePipelineError(error);
+    res.status(wrapped.statusCode).json({ error: wrapped.message, details: wrapped.details || null });
+  }
+};
+
+const deleteRoiHandler = async (req, res) => {
+  const { projectId, imageId, roiId } = req.params;
+  const roiName = sanitizeRoiName(roiId || req.body?.roiName || req.body?.name, null);
+
+  if (!projectId || !imageId) {
+    return res.status(400).json({ error: 'projectId and imageId are required' });
+  }
+
+  if (!roiName) {
+    return res.status(400).json({ error: 'ROI name is required for deletion' });
+  }
+
+  try {
+    let datasetReady = true;
+    try {
+      ensureProcessedDataset(projectId, imageId);
+    } catch (datasetError) {
+      if (datasetError?.statusCode === 404 || datasetError?.statusCode === 409) {
+        datasetReady = false;
+      } else {
+        throw datasetError;
+      }
+    }
+
+    if (datasetReady) {
+      try {
+        await applyPipelineDelete({ projectId, imageId, roiName });
+        await syncProcessedDataset({ projectId, imageId, reason: 'roi-delete' });
+      } catch (pipelineError) {
+        if (pipelineError?.statusCode !== 404) {
+          console.warn(`ROI pipeline deletion failed for ${projectId}/${imageId}/${roiName}:`, pipelineError.message || pipelineError);
+        }
+      }
+    }
+
+    try {
+      await removeRoiMetadata({ projectId, imageId, roiName });
+    } catch (metadataError) {
+      console.warn(`Failed to remove ROI metadata for ${projectId}/${imageId}/${roiName}:`, metadataError.message);
+    }
+
+  res.json({ success: true, pipelineSyncAttempted: datasetReady });
+  } catch (error) {
+    const wrapped = handlePipelineError(error);
+    res.status(wrapped.statusCode).json({ error: wrapped.message, details: wrapped.details || null });
+  }
+};
+
+app.get('/api/projects/:projectId/images/:imageId/rois', listRoiHandler);
+app.post('/api/projects/:projectId/images/:imageId/rois', createRoiHandler);
+app.put('/api/projects/:projectId/images/:imageId/rois/:roiId', updateRoiHandler);
+app.delete('/api/projects/:projectId/images/:imageId/rois/:roiId', deleteRoiHandler);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -484,264 +1065,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Project-aware ROI storage -------------------------------------------------
-const DEFAULT_PROJECT_ID = 'default-project';
-
-/**
- * @typedef {{
- *   id: string;
- *   name: string;
- *   projectId: string;
- *   imageId: string;
- *   geometry: { x: number; y: number; w: number; h: number };
- *   createdAt: number;
- * }} ROIRecord
- */
-
-/** @type {Map<string, Map<string, ROIRecord[]>>} */
-const roiStore = new Map();
-
-const ensureProjectStore = (projectId = DEFAULT_PROJECT_ID) => {
-  if (!roiStore.has(projectId)) {
-    roiStore.set(projectId, new Map());
-  }
-  return roiStore.get(projectId);
-};
-
-const getImageROIs = (projectId = DEFAULT_PROJECT_ID, imageId) => {
-  if (!imageId) return [];
-  const projectStore = ensureProjectStore(projectId);
-  return projectStore.get(imageId) || [];
-};
-
-const persistImageROIs = (projectId, imageId, roisForImage) => {
-  const projectStore = ensureProjectStore(projectId);
-  if (!roisForImage || roisForImage.length === 0) {
-    projectStore.delete(imageId);
-    if (projectStore.size === 0) {
-      roiStore.delete(projectId);
-    }
-    return;
-  }
-  projectStore.set(imageId, roisForImage);
-};
-
-const cloneROI = (roi) => ({
-  ...roi,
-  geometry: { ...roi.geometry }
-});
-
-const listROIs = (projectId = DEFAULT_PROJECT_ID, imageId) => {
-  return getImageROIs(projectId, imageId).map(cloneROI);
-};
-
-const resolveProjectId = (req, fallback = DEFAULT_PROJECT_ID) => {
-  const candidate = req.params?.projectId || req.body?.projectId || req.query?.projectId;
-  return candidate && typeof candidate === 'string' ? candidate : fallback;
-};
-
-const validateGeometry = (geometry) => {
-  if (!geometry || typeof geometry !== 'object') return false;
-  const keys = ['x', 'y', 'w', 'h'];
-  return keys.every((key) => Number.isFinite(geometry[key]));
-};
-
-const createROIRecord = ({ projectId = DEFAULT_PROJECT_ID, imageId, name, geometry }) => {
-  const roi = {
-    id: `roi_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-    name: name?.trim() || `ROI ${Date.now()}`,
-    projectId,
-    imageId,
-    geometry: {
-      x: Number(geometry.x),
-      y: Number(geometry.y),
-      w: Number(geometry.w),
-      h: Number(geometry.h)
-    },
-    createdAt: Date.now()
-  };
-
-  const current = getImageROIs(projectId, imageId);
-  persistImageROIs(projectId, imageId, [...current, roi]);
-
-  return cloneROI(roi);
-};
-
-const updateROIRecord = (projectId, imageId, roiId, updates) => {
-  const current = getImageROIs(projectId, imageId);
-  const index = current.findIndex((roi) => roi.id === roiId);
-  if (index === -1) return null;
-
-  const existing = current[index];
-  const next = [...current];
-
-  const geometryUpdate = updates.geometry
-    ? {
-      x: Number(updates.geometry.x ?? existing.geometry.x),
-      y: Number(updates.geometry.y ?? existing.geometry.y),
-      w: Number(updates.geometry.w ?? existing.geometry.w),
-      h: Number(updates.geometry.h ?? existing.geometry.h)
-    }
-    : existing.geometry;
-
-  const updated = {
-    ...existing,
-    ...(updates.name ? { name: updates.name.trim() } : {}),
-    geometry: geometryUpdate
-  };
-
-  next[index] = updated;
-  persistImageROIs(projectId, imageId, next);
-
-  return cloneROI(updated);
-};
-
-const deleteROIRecord = (projectId, imageId, roiId) => {
-  const current = getImageROIs(projectId, imageId);
-  const filtered = current.filter((roi) => roi.id !== roiId);
-  if (filtered.length === current.length) return false;
-  persistImageROIs(projectId, imageId, filtered);
-  return true;
-};
-
-// Project-scoped ROI endpoints ----------------------------------------------
-app.get('/api/projects/:projectId/images/:imageId/rois', (req, res) => {
-  const { projectId, imageId } = req.params;
-  res.json(listROIs(projectId, imageId));
-});
-
-app.post('/api/projects/:projectId/images/:imageId/rois', (req, res) => {
-  const { projectId, imageId } = req.params;
-  const { name, geometry } = req.body || {};
-
-  if (!validateGeometry(geometry)) {
-    return res.status(400).json({ error: 'Invalid ROI geometry' });
-  }
-
-  const roi = createROIRecord({ projectId, imageId, name, geometry });
-  res.status(201).json(roi);
-});
-
-app.put('/api/projects/:projectId/images/:imageId/rois/:roiId', (req, res) => {
-  const { projectId, imageId, roiId } = req.params;
-  const { name, geometry } = req.body || {};
-
-  if (geometry && !validateGeometry(geometry)) {
-    return res.status(400).json({ error: 'Invalid ROI geometry' });
-  }
-
-  const updated = updateROIRecord(projectId, imageId, roiId, { name, geometry });
-  if (!updated) {
-    return res.status(404).json({ error: 'ROI not found' });
-  }
-
-  res.json(updated);
-});
-
-app.delete('/api/projects/:projectId/images/:imageId/rois/:roiId', (req, res) => {
-  const { projectId, imageId, roiId } = req.params;
-  const deleted = deleteROIRecord(projectId, imageId, roiId);
-  if (!deleted) {
-    return res.status(404).json({ error: 'ROI not found' });
-  }
-
-  res.json({ success: true });
-});
-
-// Backwards-compatible ROI endpoints ---------------------------------------
-app.get('/api/slides/:slideId/rois', (req, res) => {
-  const { slideId } = req.params;
-  const projectId = resolveProjectId(req);
-  res.json(listROIs(projectId, slideId));
-});
-
-app.get('/api/images/:imageId/rois', (req, res) => {
-  const { imageId } = req.params;
-  const projectId = resolveProjectId(req);
-  res.json(listROIs(projectId, imageId));
-});
-
-app.post('/api/slides/:slideId/rois', (req, res) => {
-  const { slideId } = req.params;
-  const projectId = resolveProjectId(req);
-  const { name, geometry } = req.body || {};
-
-  if (!validateGeometry(geometry)) {
-    return res.status(400).json({ error: 'Invalid ROI geometry' });
-  }
-
-  const roi = createROIRecord({ projectId, imageId: slideId, name, geometry });
-  res.status(201).json(roi);
-});
-
-app.post('/api/images/:imageId/rois', (req, res) => {
-  const { imageId } = req.params;
-  const projectId = resolveProjectId(req);
-  const { name, geometry } = req.body || {};
-
-  if (!validateGeometry(geometry)) {
-    return res.status(400).json({ error: 'Invalid ROI geometry' });
-  }
-
-  const roi = createROIRecord({ projectId, imageId, name, geometry });
-  res.status(201).json(roi);
-});
-
-app.put('/api/slides/:slideId/rois/:roiId', (req, res) => {
-  const { slideId, roiId } = req.params;
-  const projectId = resolveProjectId(req);
-  const { name, geometry } = req.body || {};
-
-  if (geometry && !validateGeometry(geometry)) {
-    return res.status(400).json({ error: 'Invalid ROI geometry' });
-  }
-
-  const updated = updateROIRecord(projectId, slideId, roiId, { name, geometry });
-  if (!updated) {
-    return res.status(404).json({ error: 'ROI not found' });
-  }
-
-  res.json(updated);
-});
-
-app.put('/api/images/:imageId/rois/:roiId', (req, res) => {
-  const { imageId, roiId } = req.params;
-  const projectId = resolveProjectId(req);
-  const { name, geometry } = req.body || {};
-
-  if (geometry && !validateGeometry(geometry)) {
-    return res.status(400).json({ error: 'Invalid ROI geometry' });
-  }
-
-  const updated = updateROIRecord(projectId, imageId, roiId, { name, geometry });
-  if (!updated) {
-    return res.status(404).json({ error: 'ROI not found' });
-  }
-
-  res.json(updated);
-});
-
-app.delete('/api/images/:imageId/rois/:roiId', (req, res) => {
-  const { imageId, roiId } = req.params;
-  const projectId = resolveProjectId(req);
-  const deleted = deleteROIRecord(projectId, imageId, roiId);
-  if (!deleted) {
-    return res.status(404).json({ error: 'ROI not found' });
-  }
-
-  res.json({ success: true });
-});
-
-app.delete('/api/slides/:slideId/rois/:roiId', (req, res) => {
-  const { slideId, roiId } = req.params;
-  const projectId = resolveProjectId(req);
-  const deleted = deleteROIRecord(projectId, slideId, roiId);
-  if (!deleted) {
-    return res.status(404).json({ error: 'ROI not found' });
-  }
-
-  res.json({ success: true });
-});
+// ROI endpoints will be redefined below with project-aware storage
 
 // Conversation memory inspection endpoints
 app.get('/api/conversations', (req, res) => {
@@ -1105,134 +1429,11 @@ app.get('/api/examples', (req, res) => {
 // Initialize server and start
 const PORT = process.env.PORT || 5050;
 
-// ============================================================================
-// ROI Processing Endpoints
-// ============================================================================
-
-/**
- * POST /api/roi/process
- * Process a user-drawn ROI polygon and generate annotated spatial data
- * 
- * Body:
- * {
- *   "slideId": "human_kidney_001",
- *   "roiPolygon": [[x1, y1], [x2, y2], ...],
- *   "dataDir": "/path/to/xenium/data"  // optional, defaults to Human_Kidney_test_data
- * }
- */
-app.post('/api/roi/process', async (req, res) => {
-  try {
-    const { slideId, roiPolygon, dataDir } = req.body;
-
-    if (!slideId) {
-      return res.status(400).json({ error: 'slideId is required' });
-    }
-
-    if (!roiPolygon || !Array.isArray(roiPolygon) || roiPolygon.length < 3) {
-      return res.status(400).json({
-        error: 'roiPolygon must be an array of at least 3 [x, y] coordinates'
-      });
-    }
-
-    // Default to Human Kidney dataset
-    const targetDataDir = dataDir || HUMAN_KIDNEY_DATASET_DIR;
-
-    console.log(`[ROI API] Processing ROI for slide: ${slideId}`);
-    console.log(`[ROI API] Polygon vertices: ${roiPolygon.length}`);
-
-    const result = await processROI({
-      roiPolygon,
-      slideId,
-      dataDir: targetDataDir
-    });
-
-    res.json(result);
-  } catch (error) {
-    console.error('[ROI API] Error processing ROI:', error);
-    res.status(500).json({
-      error: 'Failed to process ROI',
-      message: error.message
-    });
-  }
-});
-
-/**
- * GET /api/roi/:slideId
- * Retrieve existing ROI processing results
- */
-app.get('/api/roi/:slideId', async (req, res) => {
-  try {
-    const { slideId } = req.params;
-    const result = await getROIResult(slideId);
-
-    if (!result) {
-      return res.status(404).json({ error: 'No ROI result found for this slide' });
-    }
-
-    res.json(result);
-  } catch (error) {
-    console.error('[ROI API] Error retrieving ROI result:', error);
-    res.status(500).json({
-      error: 'Failed to retrieve ROI result',
-      message: error.message
-    });
-  }
-});
-
-/**
- * GET /api/roi/:slideId/overlay.png
- * Serve the overlay image
- */
-app.get('/api/roi/:slideId/overlay.png', (req, res) => {
-  const { slideId } = req.params;
-  const imagePath = path.join(process.cwd(), 'data', 'roi_results', slideId, 'roi_overlay.png');
-
-  if (!fs.existsSync(imagePath)) {
-    return res.status(404).json({ error: 'Overlay image not found' });
-  }
-
-  res.sendFile(imagePath);
-});
-
-/**
- * GET /api/roi/:slideId/data.h5ad
- * Serve the annotated HDF5 data
- */
-app.get('/api/roi/:slideId/data.h5ad', (req, res) => {
-  const { slideId } = req.params;
-  const dataPath = path.join(process.cwd(), 'data', 'roi_results', slideId, 'annotated_data.h5ad');
-
-  if (!fs.existsSync(dataPath)) {
-    return res.status(404).json({ error: 'Annotated data not found' });
-  }
-
-  res.download(dataPath, `${slideId}_roi_annotated.h5ad`);
-});
-
-/**
- * GET /api/roi/:slideId/polygon.json
- * Retrieve the ROI polygon coordinates
- */
-app.get('/api/roi/:slideId/polygon.json', (req, res) => {
-  const { slideId } = req.params;
-  const polygonPath = path.join(process.cwd(), 'data', 'roi_results', slideId, 'roi_polygon.json');
-
-  if (!fs.existsSync(polygonPath)) {
-    return res.status(404).json({ error: 'ROI polygon not found' });
-  }
-
-  res.sendFile(polygonPath);
-});
-
-// ============================================================================
-// End ROI Processing Endpoints
-// ============================================================================
-
 async function startServer() {
-  await ensureKidneySlideAssets();
+  await ensureJobQueueInitialized();
   await initializeServer();
 
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`🚀 Enhanced SlidChat server running on port ${PORT}`);
     console.log(`📊 Functions registered: 4`);
     console.log(`🤖 LangChain agent: ${global.langchainAgent ? 'enabled' : 'disabled'}`);
@@ -1242,6 +1443,14 @@ async function startServer() {
     console.log(`   GET  http://localhost:${PORT}/api/functions`);
     console.log(`   POST http://localhost:${PORT}/api/functions/getSlideInfo/execute`);
     console.log(`   POST http://localhost:${PORT}/api/chat`);
+  });
+
+  server.on('close', () => {
+    console.log('🛑 HTTP server closed');
+  });
+
+  server.on('error', (error) => {
+    console.error('❌ HTTP server error:', error);
   });
 }
 

@@ -302,6 +302,44 @@ lsof -ti:5050 | xargs kill -9
 - Clear node_modules: `rm -rf node_modules && npm install`
 - Clear Vite cache: `npx vite --force`
 
+### ROI Issues
+
+**ROIs disappearing when switching projects/images:**
+- This has been fixed. ROIs are now properly cleared and reloaded when changing projects or images.
+- ROIs persist during zoom/pan operations.
+- Check browser console for ROI loading logs (🔄, 📦, ✨ emojis).
+
+**ROIs not appearing:**
+- Ensure the image is fully loaded (viewer status shows "Ready").
+- Check that ROIs are created for the correct project and image.
+- Verify ROI data exists in `server/data/projects/[projectId]/rois/[imageId].json`.
+
+**Creating ROIs:**
+- Hold `Ctrl` (Windows/Linux) or `Cmd` (Mac) and drag on the image to create an ROI.
+- ROIs must be a minimum size (adjusted based on zoom level).
+- ROIs are automatically saved and will reappear when you return to the image.
+
+### Upload Issues
+
+**File upload fails:**
+- Check browser console for detailed error messages (📤, ❌ emojis).
+- Verify the server is running and accessible.
+- Ensure the image ID is specified (required for file uploads).
+- Check that `server/data/projects/` directory exists and is writable.
+- Look for server logs about the upload in the terminal.
+
+**Image not displaying after upload:**
+- Wait for preprocessing to complete (status will show "Processing" then "Ready").
+- Check that DZI tiles were generated in `server/data/projects/[projectId]/tiles/`.
+- Try clicking "Refresh Status" if tiles are ready but not loading.
+- Verify the image file was uploaded correctly to `server/data/projects/[projectId]/[imageId]/files/`.
+
+**Upload appears stuck:**
+- Large files may take time to upload and process.
+- Check server logs for preprocessing job status.
+- Restart the server to reset the job queue if needed.
+- Try uploading a smaller test image first to verify the system is working.
+
 ## 🤝 Contributing
 
 1. Fork the repository

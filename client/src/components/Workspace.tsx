@@ -1,24 +1,29 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { ProjectPanel } from './ProjectPanel';
 import ImageViewerPanel from './ImageViewerPanel';
 import { LogResultsPanel } from './LogResultsPanel';
 import { ChatPanel } from './ChatPanel';
-import type { 
-  Project, 
-  Image, 
-  ROI, 
-  ChatMessage, 
-  LogEntry, 
+import type {
+  Project,
+  Image,
+  ROI,
+  ChatMessage,
+  LogEntry,
   AnalysisResult,
-  Slide 
+  ProjectRequirements
 } from '../types';
-import { 
-  fetchSlides, 
-  sendChat, 
-  uploadSlideToServer, 
-  fetchImageROIs, 
+import {
+  fetchProjects,
+  fetchProjectRequirements,
+  createProjectOnServer,
+  uploadProjectFile,
+  deleteProjectFile,
+  deleteProjectImage,
+  fetchImageROIs,
+  fetchProjectImage,
   createImageROI,
-  DEFAULT_PROJECT_ID
+  deleteProjectOnServer,
+  sendChat
 } from '../lib/api';
 
 export const Workspace: React.FC = () => {
@@ -26,11 +31,13 @@ export const Workspace: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [images, setImages] = useState<Image[]>([]);
   const [rois, setROIs] = useState<ROI[]>([]);
+  const [requirements, setRequirements] = useState<ProjectRequirements | null>(null);
   
   // Selection state
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedImage, setSelectedImage] = useState<Image | null>(null);
   const [selectedROI, setSelectedROI] = useState<ROI | null>(null);
+  const selectedProjectRef = useRef<Project | null>(null);
 
   // UI state
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -44,48 +51,6 @@ export const Workspace: React.FC = () => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [results, setResults] = useState<AnalysisResult[]>([]);
   const [loading, setLoading] = useState(false);
-
-  // Initialize with demo data
-  useEffect(() => {
-    initializeWorkspace();
-  }, []);
-
-  const initializeWorkspace = async () => {
-    try {
-      // Create a demo project
-      const demoProject: Project = {
-        id: 'demo-project',
-        name: 'Xenium Renal Cell Carcinoma',
-        description: 'Spatial transcriptomics and pathology analysis of renal cell carcinoma tissue',
-        createdAt: Date.now(),
-        imageIds: []
-      };
-
-      // Load slides and convert to images
-      const slides = await fetchSlides();
-      const demoImages: Image[] = slides.map((slide: Slide) => ({
-        ...slide,
-        projectId: demoProject.id
-      }));
-
-      // Update project with image IDs
-      demoProject.imageIds = demoImages.map(img => img.id);
-
-      setProjects([demoProject]);
-      setImages(demoImages);
-      setSelectedProject(demoProject);
-      
-      if (demoImages.length > 0) {
-        setSelectedImage(demoImages[0]);
-      }
-
-      addLog('info', 'New project created');
-      addLog('info', `Loaded ${demoImages.length} images`);
-    } catch (error) {
-      console.error('Failed to initialize workspace:', error);
-      addLog('error', 'Failed to initialize workspace');
-    }
-  };
 
   // Utility functions
   const addLog = useCallback((level: LogEntry['level'], message: string) => {
@@ -107,108 +72,316 @@ export const Workspace: React.FC = () => {
     setResults(prev => [...prev, analysisResult]);
   }, []);
 
-  // Project management
-  const handleCreateProject = useCallback((name: string, description?: string) => {
-    const newProject: Project = {
-      id: crypto.randomUUID(),
-      name,
-      description,
-      createdAt: Date.now(),
-      imageIds: []
-    };
-    
-    setProjects(prev => [...prev, newProject]);
-    setSelectedProject(newProject);
-    addLog('info', `Created new project: ${name}`);
-  }, [addLog]);
+  // Image management (defined early for dependency ordering)
+  const handleImageSelect = useCallback(async (image: Image | null, projectOverride?: Project | null) => {
+    if (!image) {
+      setSelectedImage(null);
+      setROIs([]);
+      return;
+    }
 
-  const handleProjectSelect = useCallback((project: Project) => {
-    setSelectedProject(project);
-    setSelectedImage(null);
-    setSelectedROI(null);
-    addLog('info', `Opened project: ${project.name}`);
-  }, [addLog]);
-
-  // Image management
-  const handleImageSelect = useCallback(async (image: Image) => {
     setSelectedImage(image);
     setSelectedROI(null);
     addLog('info', `Selected image: ${image.name}`);
-    
-    // Load ROIs for the selected image
+
+    const contextProject = projectOverride ?? selectedProjectRef.current;
+    const projectId = contextProject?.id ?? image.projectId;
+    if (!projectId) {
+      addLog('warning', 'Unable to determine project for selected image');
+      setROIs([]);
+      return;
+    }
+
     try {
-      const projectId = image.projectId ?? selectedProject?.id ?? DEFAULT_PROJECT_ID;
+      // console.log('🔍 Workspace: Fetching ROIs for image:', image.id, 'project:', projectId);
       const imageROIs = await fetchImageROIs(image.id, projectId);
-      setROIs(prev => {
-        // Remove existing ROIs for this image and add the new ones
-        const otherROIs = prev.filter(roi => roi.imageId !== image.id || roi.projectId !== projectId);
-        return [...otherROIs, ...imageROIs];
-      });
+      // console.log('📦 Workspace: Fetched ROIs:', imageROIs.length, imageROIs);
+      setROIs(imageROIs);
     } catch (error) {
-      console.error('Failed to load ROIs:', error);
+      // console.error('❌ Workspace: Failed to load ROIs:', error);
       addLog('warning', 'Failed to load existing ROIs');
+      setROIs([]);
     }
   }, [addLog]);
 
-  const handleAddImages = useCallback(async (files: FileList) => {
+  // Project management
+  const handleCreateProject = useCallback(async (name: string, description?: string) => {
+    try {
+      const project = await createProjectOnServer(name, description);
+      setProjects(prev => [...prev, project]);
+      addLog('info', `Created new project: ${project.name}`);
+  await handleProjectSelect(project);
+    } catch (error) {
+      console.error('Failed to create project:', error);
+      addLog('error', 'Failed to create project');
+    }
+  }, [addLog]);
+
+  const handleProjectSelect = useCallback(async (
+    project: Project,
+    options?: { skipLog?: boolean; focusImageId?: string; skipProjectStateUpdate?: boolean }
+  ) => {
+    selectedProjectRef.current = project;
+    if (!options?.skipProjectStateUpdate) {
+      setSelectedProject(project);
+    }
+    setSelectedImage(null);
+    setSelectedROI(null);
+    if (!options?.skipLog) {
+      addLog('info', `Opened project: ${project.name}`);
+    }
+
+    try {
+      setLoading(true);
+      const { requirements: reqs, images: serverImages } = await fetchProjectRequirements(project.id);
+      setRequirements(reqs);
+      setImages(serverImages);
+      setProjects(prev =>
+        prev.map(p =>
+          p.id === project.id
+            ? { ...p, imageIds: serverImages.map((img: Image) => img.id) }
+            : p
+        )
+      );
+
+      if (serverImages.length > 0) {
+        const focusImage = options?.focusImageId
+          ? serverImages.find((img: Image) => img.id === options.focusImageId) ?? serverImages[0]
+          : serverImages[0];
+        await handleImageSelect(focusImage, project);
+      } else {
+        setSelectedImage(null);
+        setROIs([]);
+      }
+    } catch (error) {
+      console.error('Failed to load project details:', error);
+      addLog('error', 'Failed to load project details');
+    } finally {
+      setLoading(false);
+    }
+  }, [addLog, handleImageSelect]);
+
+  const loadProjects = useCallback(async () => {
+    try {
+      const serverProjects = await fetchProjects();
+      setProjects(serverProjects);
+
+      if (serverProjects.length === 0) {
+        addLog('info', 'No projects available yet. Create one to get started.');
+        setSelectedProject(null);
+        setImages([]);
+        setROIs([]);
+        return;
+      }
+
+      const firstProject = serverProjects[0];
+      await handleProjectSelect(firstProject, { skipLog: true });
+    } catch (error) {
+      console.error('Failed to load projects:', error);
+      addLog('error', 'Failed to load projects from server');
+    }
+  }, [addLog, handleProjectSelect]);
+
+  // Initialize with server data
+  useEffect(() => {
+    void loadProjects();
+  }, [loadProjects]);
+
+  useEffect(() => {
+    selectedProjectRef.current = selectedProject;
+  }, [selectedProject]);
+
+  useEffect(() => {
+    if (
+      !selectedProject ||
+      !selectedImage?.id ||
+      !selectedImage?.status?.ready ||
+      selectedImage.status?.processed
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const pollImageStatus = async () => {
+      try {
+        const freshImage = await fetchProjectImage(selectedProject.id, selectedImage.id);
+        if (cancelled) {
+          return;
+        }
+
+        setImages((prev) => {
+          const index = prev.findIndex((img) => img.id === freshImage.id);
+          if (index === -1) {
+            return prev;
+          }
+          const next = [...prev];
+          next[index] = freshImage;
+          return next;
+        });
+
+        setSelectedImage((prev) => (prev && prev.id === freshImage.id ? freshImage : prev));
+
+        if (freshImage.status?.processed && intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Failed to refresh image status:', error);
+        }
+      }
+    };
+
+    pollImageStatus();
+    intervalId = setInterval(pollImageStatus, 5000);
+
+    return () => {
+      cancelled = true;
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [selectedProject?.id, selectedImage?.id, selectedImage?.status?.ready, selectedImage?.status?.processed, fetchProjectImage]);
+
+  const handleProjectFileUpload = useCallback(async (
+    params: { imageId: string; fileType: string; file: File; label?: string }
+  ) => {
+    if (!selectedProject) {
+      console.error('❌ Workspace: No project selected');
+      addLog('warning', 'Please select a project first');
+      return;
+    }
+
+    try {
+      addLog('info', `Uploading ${params.fileType} for image ${params.imageId}`);
+      
+      const result = await uploadProjectFile({
+        projectId: selectedProject.id,
+        imageId: params.imageId,
+        fileType: params.fileType,
+        file: params.file,
+        label: params.label
+      });
+      
+      addLog('success', `Uploaded ${params.fileType} file`);
+      
+      await handleProjectSelect(selectedProject, {
+        skipLog: true,
+        focusImageId: params.imageId
+      });
+    } catch (error) {
+      console.error('❌ Workspace: File upload failed:', error);
+      addLog('error', 'File upload failed');
+    }
+  }, [selectedProject, addLog, handleProjectSelect]);
+
+  const handleProjectFileDelete = useCallback(async (
+    params: { imageId: string; fileType: string }
+  ) => {
     if (!selectedProject) {
       addLog('warning', 'Please select a project first');
       return;
     }
 
-    const newImages: Image[] = [];
-    
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      try {
-        if (file.type.startsWith('image/')) {
-          // Handle standard images
-          const url = URL.createObjectURL(file);
-          const newImage: Image = {
-            id: crypto.randomUUID(),
-            name: file.name,
-            imageUrl: url,
-            thumbnailUrl: url,
-            sourceType: 'local',
-            projectId: selectedProject.id
-          };
-          newImages.push(newImage);
-        } else {
-          // Handle biological formats via server upload
-          addLog('info', `Uploading biological image: ${file.name}`);
-          const uploadedImage = await uploadSlideToServer(file);
-          const newImage: Image = {
-            ...uploadedImage,
-            projectId: selectedProject.id
-          };
-          newImages.push(newImage);
-          addLog('success', `Successfully uploaded: ${file.name}`);
-        }
-      } catch (error) {
-        addLog('error', `Failed to add image: ${file.name}`);
-      }
+    const confirmed = window.confirm(
+      `Delete ${params.fileType} file? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    try {
+      addLog('info', `Deleting ${params.fileType} for image ${params.imageId}`);
+      await deleteProjectFile({
+        projectId: selectedProject.id,
+        imageId: params.imageId,
+        fileType: params.fileType
+      });
+      addLog('success', `Deleted ${params.fileType} file`);
+      await handleProjectSelect(selectedProject, {
+        skipLog: true,
+        focusImageId: params.imageId
+      });
+    } catch (error) {
+      console.error('File deletion failed:', error);
+      addLog('error', 'File deletion failed');
+    }
+  }, [selectedProject, addLog, handleProjectSelect]);
+
+  const handleImageDelete = useCallback(async (image: Image) => {
+    if (!selectedProject) {
+      addLog('warning', 'Please select a project first');
+      return;
     }
 
-    if (newImages.length > 0) {
-      setImages(prev => [...prev, ...newImages]);
+    const confirmed = window.confirm(
+      `Delete image "${image.label || image.id}" and all its files? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    try {
+      addLog('info', `Deleting image: ${image.label || image.id}`);
+      await deleteProjectImage({
+        projectId: selectedProject.id,
+        imageId: image.id
+      });
+      addLog('success', `Deleted image: ${image.label || image.id}`);
+
+      // Update state
+      setImages((prev) => prev.filter((img) => img.id !== image.id));
       
-      // Update project with new image IDs
-      setProjects(prev => prev.map(p => 
-        p.id === selectedProject.id 
-          ? { ...p, imageIds: [...p.imageIds, ...newImages.map(img => img.id)] }
-          : p
-      ));
+      // If the deleted image was selected, clear selection
+      if (selectedImage?.id === image.id) {
+        setSelectedImage(null);
+        setSelectedROI(null);
+        setROIs([]);
+      }
 
-      setSelectedImage(newImages[0]);
-      addLog('success', `Added ${newImages.length} images to project`);
+      // Reload project to update state
+      await handleProjectSelect(selectedProject, {
+        skipLog: true
+      });
+    } catch (error) {
+      console.error('Image deletion failed:', error);
+      addLog('error', 'Image deletion failed');
     }
-  }, [selectedProject, addLog]);
+  }, [selectedProject, selectedImage, addLog, handleProjectSelect]);
+
+  const handleProjectDelete = useCallback(async (project: Project) => {
+    try {
+      addLog('info', `Deleting project: ${project.name}`);
+      await deleteProjectOnServer(project.id);
+      addLog('success', `Deleted project: ${project.name}`);
+
+      setProjects((prev) => prev.filter((p) => p.id !== project.id));
+      setImages((prev) => prev.filter((img) => img.projectId !== project.id));
+
+      if (selectedProject?.id === project.id) {
+        setSelectedProject(null);
+        selectedProjectRef.current = null;
+        setSelectedImage(null);
+        setSelectedROI(null);
+        setROIs([]);
+        setRequirements(null);
+      }
+
+      await loadProjects();
+    } catch (error) {
+      console.error('Failed to delete project:', error);
+      addLog('error', 'Failed to delete project');
+      throw error;
+    }
+  }, [addLog, deleteProjectOnServer, loadProjects, selectedProject]);
 
   // ROI management
   const handleROICreate = useCallback(async (roiData: Omit<ROI, 'id' | 'createdAt'>) => {
     try {
-  const projectId = roiData.projectId ?? selectedProject?.id ?? DEFAULT_PROJECT_ID;
-  const newROI = await createImageROI(roiData.imageId, roiData.name, roiData.geometry, projectId);
+      const projectId = roiData.projectId ?? selectedProject?.id;
+      if (!projectId) {
+        addLog('warning', 'Select a project before creating ROIs');
+        return;
+      }
+      const newROI = await createImageROI(roiData.imageId, roiData.name, roiData.geometry, projectId);
       setROIs(prev => [...prev, newROI]);
       setSelectedROI(newROI);
       addLog('success', `Created ROI: ${newROI.name}`);
@@ -216,7 +389,7 @@ export const Workspace: React.FC = () => {
       console.error('Failed to create ROI:', error);
       addLog('error', 'Failed to create ROI');
     }
-  }, [addLog]);
+  }, [addLog, selectedProject]);
 
   const handleROISelect = useCallback((roi: ROI | null) => {
     setSelectedROI(roi);
@@ -308,6 +481,23 @@ export const Workspace: React.FC = () => {
     }
   }, [selectedROI, selectedImage, addResult, addLog]);
 
+  const handleRefreshSlideStatus = useCallback(async (slideId: string) => {
+    if (!selectedProject?.id) {
+      addLog('warning', 'Select a project before refreshing slide status');
+      return;
+    }
+
+    try {
+      const freshImage = await fetchProjectImage(selectedProject.id, slideId);
+      setImages((prev) => prev.map(img => (img.id === freshImage.id ? freshImage : img)));
+      setSelectedImage((prev) => (prev && prev.id === freshImage.id ? freshImage : prev));
+      addLog('info', `Refreshed slide status for ${freshImage.label || freshImage.id}`);
+    } catch (error) {
+      console.error('Failed to refresh slide status:', error);
+      addLog('warning', 'Unable to refresh slide status right now');
+    }
+  }, [selectedProject, addLog]);
+
   return (
     <div className="h-screen flex bg-gray-100 overflow-hidden">
       {/* Left Panel - Project and Image Management */}
@@ -317,10 +507,14 @@ export const Workspace: React.FC = () => {
           images={images}
           selectedProject={selectedProject}
           selectedImage={selectedImage}
-          onProjectSelect={handleProjectSelect}
-          onImageSelect={handleImageSelect}
-          onCreateProject={handleCreateProject}
-          onAddImages={handleAddImages}
+          requirements={requirements}
+          onProjectSelect={(project) => void handleProjectSelect(project)}
+          onImageSelect={(image) => void handleImageSelect(image)}
+          onCreateProject={(name, description) => void handleCreateProject(name, description)}
+          onUploadProjectFile={(params) => handleProjectFileUpload(params)}
+          onDeleteProjectFile={(params) => handleProjectFileDelete(params)}
+          onDeleteImage={(image) => handleImageDelete(image)}
+          onDeleteProject={(project) => handleProjectDelete(project)}
         />
       </div>
 
@@ -337,6 +531,7 @@ export const Workspace: React.FC = () => {
             onROIUpdate={handleROIUpdate}
             onROIDelete={handleROIDelete}
             onAnalyzeROI={handleAnalyzeROI}
+            onRefreshSlide={handleRefreshSlideStatus}
           />
         </div>
 
