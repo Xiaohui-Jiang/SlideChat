@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # Node.js SlideChat backend
+  slidechat-server:
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+    ports:
+      - "5050:5050"
+    environment:
+      - NODE_ENV=production
+      - PYTHON_MULTIAGENT_URL=http://python-multiagent:8000
+    volumes:
+      - ../server:/app
+      - /app/node_modules
+    networks:
+      - slidechat-network
+    depends_on:
+      - python-multiagent
+
+  # Python Multiagent Analysis Service
+  python-multiagent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - .:/app
+      - ./job_results:/app/job_results
+      - ../data:/data # Mount data directory
+    networks:
+      - slidechat-network
+  # React frontend (optional - can be served by Vite dev server)
+  # slidechat-client:
+  #   build:
+  #     context: ../client
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - VITE_API_URL=http://localhost:5050
+  #   networks:
+  #     - slidechat-network
+
+networks:
+  slidechat-network:
+    driver: bridge
+
+volumes:
+  job_results:

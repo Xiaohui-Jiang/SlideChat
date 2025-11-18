@@ -1,0 +1,36 @@
+{
+  "id": "205d3a57-ba4a-4a1b-8ba6-b0a4520f5ab3",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1763105341528
+  },
+  "createdAt": 1763105341550,
+  "updatedAt": 1763105343242,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "21dd3961-0731-46b6-a367-eee763840671",
+      "role": "user",
+      "content": "hello, are you multiagent?",
+      "name": null,
+      "metadata": {
+        "timestamp": 1763105341528
+      },
+      "createdAt": 1763105341550,
+      "tokenEstimate": 7
+    },
+    {
+      "id": "eb7a1d7d-d3a4-4f4e-8830-20e931466f9d",
+      "role": "assistant",
+      "content": "Hello! I am not a multi-agent system; I am a single assistant designed to help you with biological slide analysis and related tasks. How can I assist you today?",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1763105343242,
+      "tokenEstimate": 40
+    }
+  ]
+}

@@ -21,8 +21,8 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from .planner import LLMPlanBuilder, ParameterPrompt, PlanBuilder, PlanStep
-from .prompts import (
+from planner import LLMPlanBuilder, ParameterPrompt, PlanBuilder, PlanStep
+from prompts import (
     CONFIRM_MESSAGES,
     ERROR_MESSAGES,
     INFO_MESSAGES,
@@ -31,7 +31,7 @@ from .prompts import (
     LLM_SYSTEM_MESSAGES,
     TEMPLATE_ERROR_MESSAGES,
 )
-from .report_utils import (
+from report_utils import (
     collect_figure_paths,
     figures_to_pdf,
     render_text_report,
@@ -65,9 +65,11 @@ class AnalysisResult:
     logs: List[ExecutionLogEntry]
 
 
-DEFAULT_OPENAI_KEY_PATH = Path("/Users/xiaohui/Desktop/keys/openai_xielab.txt")
+DEFAULT_OPENAI_KEY_PATH = Path("~/.openai/api_key")
 OPENAI_KEY_ENV_VAR = "OPENAI_API_KEY"
 OPENAI_KEY_PATH_ENV_VAR = "OPENAI_API_KEY_FILE"
+# Direct API key - set this if you want to hardcode the key
+DIRECT_OPENAI_KEY = "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"
 
 
 def _read_openai_key_file(path: Path) -> Optional[str]:
@@ -84,19 +86,28 @@ def _read_openai_key_file(path: Path) -> Optional[str]:
 
 
 def _ensure_openai_api_key() -> Optional[str]:
+    # First, check if there's a hardcoded key
+    if DIRECT_OPENAI_KEY and DIRECT_OPENAI_KEY.startswith("sk-"):
+        os.environ[OPENAI_KEY_ENV_VAR] = DIRECT_OPENAI_KEY
+        logger.info("✅ Using hardcoded OpenAI API key from agent.py")
+        return DIRECT_OPENAI_KEY
+    
+    # Next, check environment variable
     existing = os.environ.get(OPENAI_KEY_ENV_VAR, "").strip()
     if existing:
+        logger.info("✅ Using OpenAI API key from environment variable")
         return existing
 
+    # Finally, try to read from file
     override = os.environ.get(OPENAI_KEY_PATH_ENV_VAR)
     candidate = Path(override).expanduser() if override else DEFAULT_OPENAI_KEY_PATH
     key = _read_openai_key_file(candidate)
     if key:
         os.environ[OPENAI_KEY_ENV_VAR] = key
-        logger.debug("Loaded OpenAI API key from %s", candidate)
+        logger.info("✅ Loaded OpenAI API key from %s", candidate)
         return key
 
-    logger.debug("OpenAI API key could not be determined; planner may require manual configuration.")
+    logger.warning("⚠️  OpenAI API key could not be determined; planner may require manual configuration.")
     return None
 
 
@@ -650,7 +661,7 @@ class BioAnalysisAgent:
             self._context["marker_question_suggestion"] = suggestion
             self.user_io.display(
                 "Auto-generated biological context suggestion:\n"
-                f"{suggestion}\nPress Enter to accept or provide your own description."
+                f"{suggestion}\n\nLeave empty to accept, or provide your own description:"
             )
 
     def _gather_step_parameters(
@@ -800,7 +811,7 @@ class BioAnalysisAgent:
                 self.user_io.display("Default biological context:")
                 self.user_io.display(default)
                 addition = self.user_io.prompt(
-                    "Add any extra details (cell types, markers, notes) or press Enter to accept:"
+                    "Add any extra details (cell types, markers, notes), or leave empty to accept:"
                 ).strip()
                 if addition:
                     default = f"{default} {addition}".strip()
@@ -808,7 +819,7 @@ class BioAnalysisAgent:
                 self._store_parameter_in_context(prompt, default)
                 self._context.pop("marker_question_suggestion", None)
                 guidance = self.user_io.prompt(
-                    "Add guidance for marker recommendation (e.g., emphasise certain cell types) or press Enter to continue:"
+                    "Add guidance for marker recommendation (e.g., emphasise certain cell types), or leave empty to continue:"
                 ).strip()
                 if guidance:
                     self._context["marker_guidance"] = guidance

@@ -6,6 +6,24 @@ html, body, #root {
   height: 100%;
 }
 
+/* Force word wrapping for long content */
+.whitespace-pre-wrap {
+  white-space: pre-wrap !important;
+  word-wrap: break-word !important;
+  word-break: break-word !important;
+  overflow-wrap: break-word !important;
+}
+
+.break-words {
+  word-wrap: break-word !important;
+  word-break: break-word !important;
+  overflow-wrap: break-word !important;
+}
+
+.overflow-wrap-anywhere {
+  overflow-wrap: anywhere !important;
+}
+
 /* (optional) nicer scrolling */
 *::-webkit-scrollbar {
   width: 8px;

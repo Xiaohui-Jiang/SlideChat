@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Type
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 
-from .biotools import (
+from biotools import (
     BioToolBase,
     CellTypingTool,
     DEAnalysisTool,
@@ -17,7 +17,7 @@ from .biotools import (
     PreprocessPipelineTool,
     SpatialDomainTool,
 )
-from .prompts import LLM_PROMPTS, LLM_SYSTEM_MESSAGES, PARAMETER_PROMPTS
+from prompts import LLM_PROMPTS, LLM_SYSTEM_MESSAGES, PARAMETER_PROMPTS
 
 LOGGER = logging.getLogger(__name__)
 

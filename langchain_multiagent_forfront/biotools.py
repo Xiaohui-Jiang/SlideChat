@@ -14,6 +14,9 @@ from langchain_core.runnables import Runnable, RunnableConfig
 from pydantic.v1 import BaseModel, Field, create_model
 from langchain_openai import ChatOpenAI
 
+# Configure matplotlib to use non-interactive backend
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 import scanpy as sc
@@ -93,8 +96,8 @@ warnings.filterwarnings(
     category=FutureWarning,
 )
 
-from .prompts import LLM_PROMPTS, LLM_SYSTEM_MESSAGES
-from .report_utils import save_figure
+from prompts import LLM_PROMPTS, LLM_SYSTEM_MESSAGES
+from report_utils import save_figure
 
 
 def _build_output_path(

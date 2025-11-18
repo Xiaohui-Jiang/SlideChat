@@ -4,12 +4,14 @@ import type { LogEntry, AnalysisResult } from '../types';
 interface LogResultsPanelProps {
   logs: LogEntry[];
   results: AnalysisResult[];
+  multiagentResult?: any;
   className?: string;
 }
 
 export const LogResultsPanel: React.FC<LogResultsPanelProps> = ({
   logs,
   results,
+  multiagentResult,
   className = ''
 }) => {
   const [activeTab, setActiveTab] = useState<'log' | 'results'>('log');
@@ -44,8 +46,8 @@ export const LogResultsPanel: React.FC<LogResultsPanelProps> = ({
               <div key={`${key}-${subKey}`} className="flex justify-between">
                 <span className="capitalize">{subKey.replace(/_/g, ' ')}:</span>
                 <span className="font-mono">
-                  {typeof subValue === 'number' 
-                    ? key === 'percentages' 
+                  {typeof subValue === 'number'
+                    ? key === 'percentages'
                       ? `${subValue.toFixed(1)}%`
                       : subValue.toLocaleString()
                     : String(subValue)
@@ -62,7 +64,7 @@ export const LogResultsPanel: React.FC<LogResultsPanelProps> = ({
           );
         });
       }
-      
+
       // Handle general object data
       return Object.entries(data).map(([key, value]) => (
         <div key={key} className="flex justify-between text-sm">
@@ -73,7 +75,7 @@ export const LogResultsPanel: React.FC<LogResultsPanelProps> = ({
         </div>
       ));
     }
-    
+
     return <div className="text-sm text-gray-600">{String(data)}</div>;
   };
 
@@ -93,21 +95,19 @@ export const LogResultsPanel: React.FC<LogResultsPanelProps> = ({
       <div className="flex border-b">
         <button
           onClick={() => setActiveTab('log')}
-          className={`flex-1 px-4 py-2 text-sm font-medium ${
-            activeTab === 'log' 
-              ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-700' 
+          className={`flex-1 px-4 py-2 text-sm font-medium ${activeTab === 'log'
+              ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-700'
               : 'text-gray-600 hover:text-gray-800'
-          }`}
+            }`}
         >
           Log
         </button>
         <button
           onClick={() => setActiveTab('results')}
-          className={`flex-1 px-4 py-2 text-sm font-medium ${
-            activeTab === 'results' 
-              ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-700' 
+          className={`flex-1 px-4 py-2 text-sm font-medium ${activeTab === 'results'
+              ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-700'
               : 'text-gray-600 hover:text-gray-800'
-          }`}
+            }`}
         >
           Results
         </button>
@@ -140,8 +140,94 @@ export const LogResultsPanel: React.FC<LogResultsPanelProps> = ({
 
         {activeTab === 'results' && (
           <div className="h-full overflow-y-auto p-3">
+            {/* Multiagent Analysis Results */}
+            {multiagentResult && multiagentResult.status === 'completed' && (
+              <div className="mb-4 border-2 border-indigo-200 rounded-lg bg-gradient-to-br from-indigo-50 to-purple-50">
+                <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-4 py-3 rounded-t-lg">
+                  <h3 className="font-semibold text-sm">Analysis Results</h3>
+                  <p className="text-xs text-indigo-100">Job ID: {multiagentResult.job_id?.substring(0, 8)}...</p>
+                </div>
+
+                <div className="p-4">
+                  {/* Summary */}
+                  {multiagentResult.summary && (
+                    <div className="mb-4">
+                      <h4 className="text-sm font-semibold text-gray-800 mb-2">Summary</h4>
+                      <div className="bg-white rounded p-3 text-sm text-gray-700 whitespace-pre-wrap border border-gray-200">
+                        {multiagentResult.summary}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Download Links */}
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-800 mb-2">Download Files</h4>
+                    <div className="space-y-2">
+                      {multiagentResult.report_url && (
+                        <a
+                          href={multiagentResult.report_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-between p-3 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded transition-colors text-sm group"
+                        >
+                          <div className="flex items-center space-x-2">
+                            <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span className="font-medium text-gray-800">Text Report</span>
+                          </div>
+                          <svg className="w-4 h-4 text-blue-600 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </a>
+                      )}
+
+                      {multiagentResult.pdf_url && (
+                        <a
+                          href={multiagentResult.pdf_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-between p-3 bg-red-50 hover:bg-red-100 border border-red-200 rounded transition-colors text-sm group"
+                        >
+                          <div className="flex items-center space-x-2">
+                            <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                            </svg>
+                            <span className="font-medium text-gray-800">PDF Report</span>
+                          </div>
+                          <svg className="w-4 h-4 text-red-600 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </a>
+                      )}
+
+                      {multiagentResult.log_url && (
+                        <a
+                          href={multiagentResult.log_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-between p-3 bg-green-50 hover:bg-green-100 border border-green-200 rounded transition-colors text-sm group"
+                        >
+                          <div className="flex items-center space-x-2">
+                            <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span className="font-medium text-gray-800">Analysis Log</span>
+                          </div>
+                          <svg className="w-4 h-4 text-green-600 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Original Results */}
             <div className="space-y-4">
-              {results.length === 0 ? (
+              {results.length === 0 && (!multiagentResult || multiagentResult.status !== 'completed') ? (
                 <div className="text-gray-500 text-sm text-center py-4">
                   No analysis results yet
                 </div>
@@ -163,7 +249,7 @@ export const LogResultsPanel: React.FC<LogResultsPanelProps> = ({
                         </span>
                       )}
                     </div>
-                    
+
                     <div className="space-y-2">
                       {formatAnalysisData(result.data)}
                     </div>
