@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import '../styles/openseadragon.css';
-import type { Slide, ROI } from '../types';
+import type { Slide, ROI, PipelineRunStatus } from '../types';
 import { fetchImageROIs, createImageROI, deleteImageROI, DEFAULT_PROJECT_ID } from '../lib/api';
 
 // Import OpenSeadragon without types (use any for now)
@@ -12,6 +12,13 @@ type Props = {
   onSelect: (id: string) => void;
   onAnalyzeROI?: (roi: ROI, slide: Slide) => void;
   projectId?: string;
+  rois?: ROI[];
+  selectedROI?: ROI | null;
+  onROISelect?: (roi: ROI | null) => void;
+  onROICreate?: (roiData: Omit<ROI, 'id' | 'createdAt'>) => Promise<void>;
+  onROIUpdate?: (roiId: string, updates: Partial<ROI>) => void;
+  onROIDelete?: (roiId: string) => void;
+  onRefreshSlide?: (slideId: string) => Promise<void> | void;
 };
 
 type OpenSeadragonROI = ROI & {
@@ -20,6 +27,43 @@ type OpenSeadragonROI = ROI & {
 };
 
 const ROI_COLORS = ['#10b981', '#3b82f6', '#f97316', '#ec4899', '#8b5cf6', '#f59e0b', '#0ea5e9'];
+
+const ROI_STATUS_LABELS: Record<PipelineRunStatus, string> = {
+  idle: 'Idle',
+  pending: 'Pending',
+  queued: 'Queued',
+  processing: 'Processing',
+  completed: 'Ready',
+  failed: 'Failed'
+};
+
+const ROI_STATUS_BADGE_CLASSES: Record<PipelineRunStatus, string> = {
+  idle: 'bg-gray-100 text-gray-600 border border-gray-200',
+  pending: 'bg-amber-100/70 text-amber-700 border border-amber-200',
+  queued: 'bg-amber-100/70 text-amber-700 border border-amber-200',
+  processing: 'bg-sky-100/80 text-sky-700 border border-sky-200',
+  completed: 'bg-emerald-100/80 text-emerald-700 border border-emerald-200',
+  failed: 'bg-rose-100/80 text-rose-700 border border-rose-200'
+};
+
+const ROI_INFLIGHT_STATUSES: PipelineRunStatus[] = ['pending', 'queued', 'processing'];
+const ROI_FAILED_STATUS: PipelineRunStatus = 'failed';
+const ROI_NAME_PATTERN = /^roi[\s_-]*(\d+)$/i;
+const sanitizeRoiLabel = (value: string) => value.replace(/[^A-Za-z0-9_-]/g, '_');
+const compareROIOrder = (a: ROI, b: ROI) => {
+  const aTime = a.createdAt ?? 0;
+  const bTime = b.createdAt ?? 0;
+  if (aTime && bTime && aTime !== bTime) {
+    return aTime - bTime;
+  }
+  if (aTime !== bTime) {
+    return aTime - bTime;
+  }
+  return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+};
+
+const isInFlightStatus = (status?: PipelineRunStatus | null) =>
+  !!status && ROI_INFLIGHT_STATUSES.includes(status);
 
 const styleNavigatorElement = (container: HTMLElement | null) => {
   if (!container) return;
@@ -59,21 +103,104 @@ interface OSDRect {
   height: number;
 }
 
-export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect, onAnalyzeROI, projectId }: Props) {
+type TileSourceConfig = {
+  kind: 'dzi' | 'image';
+  url: string;
+};
+
+const buildTileSource = (slide: Slide | undefined): TileSourceConfig | null => {
+  if (!slide || !slide.dziManifestUrl) {
+    return null;
+  }
+  return { kind: 'dzi', url: slide.dziManifestUrl };
+};
+
+export default function OpenSeadragonSlideViewer({
+  slides,
+  selectedId,
+  onSelect,
+  onAnalyzeROI,
+  projectId,
+  rois: externalROIs,
+  selectedROI: externalSelectedROI,
+  onROISelect,
+  onRefreshSlide
+}: Props) {
   const selected = slides.find(s => s.id === selectedId) ?? slides[0];
   const projectScope = projectId ?? selected?.projectId ?? DEFAULT_PROJECT_ID;
   const viewerRef = useRef<HTMLDivElement>(null);
   const osdViewerRef = useRef<any>(null);
   const osdModuleRef = useRef<any>(null);
-  const initedRef = useRef(false); // Guard against double initialization
+  const initializingRef = useRef<boolean>(false);
   
-  const [rois, setRois] = useState<OpenSeadragonROI[]>([]);
-  const [selectedROI, setSelectedROI] = useState<OpenSeadragonROI | null>(null);
+  const [viewerRois, setViewerRois] = useState<OpenSeadragonROI[]>([]);
+  const [viewerSelectedROI, setViewerSelectedROI] = useState<OpenSeadragonROI | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [isLoading, setIsLoading] = useState(true);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+  const [viewerReady, setViewerReady] = useState(false);
+  const [roiFeedback, setRoiFeedback] = useState<string | null>(null);
   const roisRef = useRef<OpenSeadragonROI[]>([]);
   const roiColorsRef = useRef<Record<string, string>>({});
+  const loadROIsRef = useRef<((loaded: ROI[]) => void) | null>(null);
+  const roiNameCounterRef = useRef<number>(0);
+  const [isRefreshingSlideStatus, setIsRefreshingSlideStatus] = useState(false);
+
+  const syncRoiCounter = useCallback((rois: { name?: string | null }[]) => {
+    let highestDetected = 0;
+
+    rois.forEach(roi => {
+      if (!roi.name) return;
+      const match = ROI_NAME_PATTERN.exec(roi.name);
+      if (!match) return;
+      const value = Number.parseInt(match[1], 10);
+      if (Number.isFinite(value)) {
+        highestDetected = Math.max(highestDetected, value);
+      }
+    });
+
+    roiNameCounterRef.current = highestDetected;
+  }, []);
+
+  const getNextRoiName = useCallback(() => {
+    const existingNames = new Set(roisRef.current.map(roi => roi.name));
+    let candidate = Math.max(roiNameCounterRef.current + 1, 1);
+    let attempts = 0;
+
+    while (attempts < 200) {
+      const humanName = `ROI ${candidate}`;
+      const serverName = sanitizeRoiLabel(humanName);
+      if (!existingNames.has(humanName) && !existingNames.has(serverName)) {
+        roiNameCounterRef.current = candidate;
+        return humanName;
+      }
+      candidate += 1;
+      attempts += 1;
+    }
+
+    const fallback = `ROI_${Date.now()}`;
+    roiNameCounterRef.current = Math.max(roiNameCounterRef.current, candidate);
+    return fallback;
+  }, []);
+
+  const tileJob = selected?.pipeline?.preprocess;
+  const tileJobStatus = tileJob?.status as PipelineRunStatus | undefined;
+  const hasTiles = Boolean(selected?.dziManifestUrl);
+  const tileJobInFlight = !hasTiles && isInFlightStatus(tileJobStatus);
+  const tileJobFailed = !hasTiles && tileJobStatus === ROI_FAILED_STATUS;
+  const tileStatusLabel = tileJobStatus ? ROI_STATUS_LABELS[tileJobStatus] : 'Not started';
+  const tileStatusBadgeClass = tileJobStatus
+    ? ROI_STATUS_BADGE_CLASSES[tileJobStatus]
+    : 'bg-gray-100 text-gray-600 border border-gray-200';
+  const showTileGenerationOverlay = !!selected && !hasTiles;
+
+  const selectedROIStatus = (viewerSelectedROI?.status as PipelineRunStatus | undefined) ?? 'completed';
+  const selectedROIIsFailed = selectedROIStatus === ROI_FAILED_STATUS;
+  const selectedROIIsReady = !!viewerSelectedROI && selectedROIStatus === 'completed';
+  const anyRoiInFlight = viewerRois.some(roi =>
+    isInFlightStatus((roi.status as PipelineRunStatus | undefined) ?? undefined)
+  );
   
   // Use refs to avoid stale closures in event handlers
   const createROIFromRectRef = useRef<((rect: OSDRect) => Promise<void>) | null>(null);
@@ -81,12 +208,32 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
   const highlightROIRef = useRef<((roi: OpenSeadragonROI) => void) | null>(null);
   const clearROIHighlightsRef = useRef<(() => void) | null>(null);
 
+  const notifyRoiRejected = useCallback((message: string) => {
+    console.warn(`[ROI] ${message}`);
+    setRoiFeedback(message);
+  }, []);
+
   useEffect(() => {
-    setRois([]);
+    // Clear ROI state when project or image changes
+    setViewerRois([]);
     roisRef.current = [];
     roiColorsRef.current = {};
-    setSelectedROI(null);
-  }, [selected?.id, projectScope]);
+    setViewerSelectedROI(null);
+    setViewerReady(false);
+    setRoiFeedback(null);
+    onROISelect?.(null);
+    setViewerError(null);
+    
+    // Also clear any OpenSeadragon overlays when project/image changes
+    const viewer = osdViewerRef.current;
+    if (viewer && viewer.clearOverlays) {
+      try {
+        viewer.clearOverlays();
+      } catch (err) {
+        console.warn('Error clearing overlays on project/image change:', err);
+      }
+    }
+  }, [selected?.id, projectScope, onROISelect]);
 
   const ensureOverlayPointerEvents = useCallback((element: HTMLElement | null) => {
     if (!element) return;
@@ -133,6 +280,16 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
     styleNavigatorElement(viewerRef.current);
   }, []);
 
+  const formatTimestamp = useCallback((timestamp?: number | null) => {
+    if (!timestamp) return null;
+    try {
+      return new Date(timestamp).toLocaleString();
+    } catch (err) {
+      console.warn('Failed to format timestamp', err);
+      return null;
+    }
+  }, []);
+
   const hexToRgba = useCallback((hex: string, alpha: number) => {
     let normalized = hex.replace('#', '');
     if (normalized.length === 3) {
@@ -166,32 +323,85 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
 
   // Initialize OpenSeadragon viewer
   useEffect(() => {
-    // Guard against double initialization (StrictMode)
-    if (!viewerRef.current || !selected || initedRef.current) return;
+    const container = viewerRef.current;
 
-    setIsLoading(true);
-    initedRef.current = true;
-
-    // Ensure container is clean
-    if (viewerRef.current) {
-      viewerRef.current.innerHTML = '';
+    if (!container || !selected) {
+      setIsLoading(false);
+      setViewerError(null);
+      return;
     }
 
+    const tileSource = buildTileSource(selected);
+
+    if (!tileSource) {
+      container.innerHTML = '';
+      setIsLoading(false);
+      return;
+    }
+
+    // Prevent concurrent initialization
+    if (initializingRef.current) {
+      console.warn('OpenSeadragon initialization already in progress, skipping...');
+      return;
+    }
+
+  setIsLoading(true);
+  setViewerError(null);
+
+    // Destroy any existing viewer before creating a new one
+    if (osdViewerRef.current) {
+      try {
+        osdViewerRef.current.destroy();
+      } catch (err) {
+        console.warn('Error destroying previous OpenSeadragon viewer:', err);
+      }
+      osdViewerRef.current = null;
+      osdModuleRef.current = null;
+    }
+
+    // Ensure container is completely clean after destroying viewer
+    // This prevents background image overlap issues
+    if (container) {
+      // Remove ALL children to ensure no leftover openseadragon-container divs
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
+      // Reset inline styles that might persist
+      container.style.background = '#fafafa';
+    }
+
+    initializingRef.current = true;
+
     // Import OpenSeadragon dynamically to avoid typing issues
-    import('openseadragon')
+  import('openseadragon')
       .then((OSD) => {
-        const OpenSeadragon = OSD.default;
+        const OpenSeadragon = OSD.default ?? (OSD as any);
+        if (!OpenSeadragon) {
+          throw new Error('OpenSeadragon module did not provide a default export');
+        }
+
         osdModuleRef.current = OpenSeadragon;
-      
-        // Ensure we don't create a viewer if already destroyed
-        if (!initedRef.current) return;
-        
+
+        if (!container || !container.isConnected) {
+          console.warn('OpenSeadragon container is no longer mounted; skipping initialization.');
+          setIsLoading(false);
+          initializingRef.current = false;
+          return;
+        }
+
+        // Double-check container is still clean (no leftover .openseadragon-container)
+        const existingOSD = container.querySelector('.openseadragon-container');
+        if (existingOSD) {
+          container.removeChild(existingOSD);
+        }
+
+      const openSeaDragonTileSource = tileSource.kind === 'dzi'
+        ? tileSource.url
+        : { type: 'image', url: tileSource.url };
+
       osdViewerRef.current = OpenSeadragon({
-        element: viewerRef.current,
-        tileSources: {
-          type: 'image',
-          url: selected.imageUrl
-        },
+        element: container,
+        tileSources: openSeaDragonTileSource,
         prefixUrl: 'https://openseadragon.github.io/openseadragon/images/',
         animationTime: 0.3,
     showNavigationControl: false, // We'll use custom controls
@@ -222,6 +432,21 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
 
       setupEventHandlers(OpenSeadragon);
       
+      // Guard against duplicate tile sources
+      osdViewerRef.current.addHandler('add-item', (event: any) => {
+        const itemCount = osdViewerRef.current?.world?.getItemCount?.();
+        if (itemCount && itemCount > 1) {
+          console.warn(`OpenSeadragon world has ${itemCount} items, removing duplicates...`);
+          // Remove all items except the first one
+          for (let i = itemCount - 1; i >= 1; i--) {
+            const item = osdViewerRef.current.world.getItemAt(i);
+            if (item) {
+              osdViewerRef.current.world.removeItem(item);
+            }
+          }
+        }
+      });
+      
       // Track zoom changes
       osdViewerRef.current.addHandler('zoom', (event: any) => {
         setZoomLevel(event.zoom);
@@ -229,16 +454,27 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
       
       // Load ROIs after viewer is ready
       osdViewerRef.current.addHandler('open', () => {
-        setIsLoading(false);
-        applyNavigatorStyle();
-        if (selected?.id) {
-          console.log('🔄 Image opened, fetching ROIs:', { imageId: selected.id, projectId: projectScope });
-          fetchImageROIs(selected.id, projectScope).then((loadedROIs) => {
-            console.log('📦 Fetched ROIs from server:', loadedROIs.length);
-            loadROIs(loadedROIs);
-          });
+        // Ensure only one tile source exists
+        const itemCount = osdViewerRef.current?.world?.getItemCount?.();
+        if (itemCount && itemCount > 1) {
+          console.warn(`After open: world has ${itemCount} items, keeping only the first`);
+          for (let i = itemCount - 1; i >= 1; i--) {
+            const item = osdViewerRef.current.world.getItemAt(i);
+            if (item) {
+              osdViewerRef.current.world.removeItem(item);
+            }
+          }
         }
-
+        
+        setIsLoading(false);
+        setViewerError(null);
+        setViewerReady(true);
+        initializingRef.current = false;
+        applyNavigatorStyle();
+        
+        // ROIs will be loaded by the useEffect that watches externalROIs and viewerReady
+        // This prevents double-loading ROIs
+        
         // Ensure the image fits nicely
         setTimeout(() => {
           osdViewerRef.current?.viewport?.goHome(true);
@@ -248,18 +484,25 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
       osdViewerRef.current.addHandler('open-failed', (event: any) => {
         console.error('OpenSeadragon failed to open image:', event);
         setIsLoading(false);
-  applyNavigatorStyle();
+        setViewerReady(false);
+        initializingRef.current = false;
+        setViewerError(
+          tileSource.kind === 'dzi'
+            ? 'Deep Zoom tiles are not ready yet. Please retry once preprocessing completes.'
+            : 'Unable to display this image. Please try again or choose another slide.'
+        );
+        applyNavigatorStyle();
       });
       })
       .catch((error: unknown) => {
         console.error('Failed to load OpenSeadragon:', error);
         setIsLoading(false);
-        initedRef.current = false;
+        initializingRef.current = false;
       });
 
     return () => {
       // Cleanup function
-      initedRef.current = false;
+      initializingRef.current = false;
       
       if (osdViewerRef.current) {
         try {
@@ -271,21 +514,72 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
       }
       
       osdModuleRef.current = null;
-  applyNavigatorStyle();
       
-      // Clean the container
+      // Clean the container thoroughly to prevent background overlap
       if (viewerRef.current) {
-        viewerRef.current.innerHTML = '';
+        // Remove all children completely
+        while (viewerRef.current.firstChild) {
+          viewerRef.current.removeChild(viewerRef.current.firstChild);
+        }
+        // Reset background to prevent old images from showing
+        viewerRef.current.style.background = '#fafafa';
       }
+
+      setViewerReady(false);
     };
-  }, [selected?.id, projectScope, applyNavigatorStyle]);
+  }, [selected?.id, selected?.dziManifestUrl, projectScope]);
+
+  const handleRetryLoad = useCallback(() => {
+    const viewer = osdViewerRef.current;
+    if (!viewer || !selected) {
+      return;
+    }
+    const tileSource = buildTileSource(selected);
+    if (!tileSource) {
+      return;
+    }
+    setViewerError(null);
+    setIsLoading(true);
+    try {
+      // Close existing tile sources before opening new one to prevent duplicates
+      viewer.close();
+      const source = tileSource.kind === 'dzi' ? tileSource.url : { type: 'image', url: tileSource.url };
+      viewer.open(source);
+    } catch (error) {
+      console.error('Retry load failed:', error);
+      setIsLoading(false);
+      setViewerError('Failed to reload slide. Please wait a moment and try again.');
+    }
+  }, [selected?.id, selected?.dziManifestUrl]);
+
+  const handleRefreshSlideStatus = useCallback(async () => {
+    if (!selected?.id || !onRefreshSlide) {
+      return;
+    }
+
+    try {
+      setIsRefreshingSlideStatus(true);
+      await Promise.resolve(onRefreshSlide(selected.id));
+    } catch (error) {
+      console.error('Failed to refresh slide status:', error);
+    } finally {
+      setIsRefreshingSlideStatus(false);
+    }
+  }, [onRefreshSlide, selected?.id]);
 
   useEffect(() => {
-    roisRef.current = rois;
+    roisRef.current = viewerRois;
+    syncRoiCounter(viewerRois);
     resetViewerPointerEvents();
     viewerRef.current?.querySelectorAll<HTMLElement>('.openseadragon-overlay')
       .forEach(ensureOverlayPointerEvents);
-  }, [rois, ensureOverlayPointerEvents, resetViewerPointerEvents]);
+  }, [viewerRois, ensureOverlayPointerEvents, resetViewerPointerEvents, syncRoiCounter]);
+
+  useEffect(() => {
+    if (!roiFeedback) return;
+    const timeout = window.setTimeout(() => setRoiFeedback(null), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [roiFeedback]);
 
   const setupEventHandlers = useCallback((OpenSeadragon: any) => {
     const viewer = osdViewerRef.current;
@@ -322,25 +616,12 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         currentPoint = startPoint;
       }
 
-      console.log('🎯 Finalizing drawing:', {
-        startPoint: { x: startPoint.x, y: startPoint.y },
-        currentPoint: { x: currentPoint.x, y: currentPoint.y },
-        eventPosition: event?.position
-      });
-
       const rect = new OpenSeadragon.Rect(
         Math.min(startPoint.x, currentPoint.x),
         Math.min(startPoint.y, currentPoint.y),
         Math.abs(currentPoint.x - startPoint.x),
         Math.abs(currentPoint.y - startPoint.y)
       );
-
-      console.log('📦 Final rect (viewport coords):', {
-        x: rect.x,
-        y: rect.y,
-        width: rect.width,
-        height: rect.height
-      });
 
       cleanupOverlay();
 
@@ -353,7 +634,7 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
       if (rect.width > minSize && rect.height > minSize) {
         createROIFromRectRef.current?.(rect);
       } else {
-        console.log('⚠️ Rect too small, not creating ROI:', rect.width, rect.height, 'zoom:', zoom, 'minSize:', minSize);
+        notifyRoiRejected('ROI too small at this zoom. Drag a larger box or zoom out slightly.');
       }
     };
 
@@ -365,10 +646,6 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         
         // Convert screen coordinates to viewport coordinates
         startPoint = viewer.viewport.pointFromPixel(event.position);
-        
-        console.log('ROI creation started at viewport coords:', startPoint);
-        console.log('Current zoom level:', viewer.viewport.getZoom());
-        console.log('Screen position:', event.position);
         
         // Create temporary overlay for drawing
         currentOverlay = document.createElement('div');
@@ -432,15 +709,17 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         
         if (clickedROI) {
           event.preventDefaultAction = true;
-          setSelectedROI(clickedROI);
+          setViewerSelectedROI(clickedROI);
           highlightROIRef.current?.(clickedROI);
+          onROISelect?.(clickedROI);
         } else {
-          setSelectedROI(null);
+          setViewerSelectedROI(null);
           clearROIHighlightsRef.current?.();
+          onROISelect?.(null);
         }
       }
     });
-  }, [ensureOverlayPointerEvents]);
+  }, [ensureOverlayPointerEvents, onROISelect, notifyRoiRejected]);
   // ☝️ Removed rois, selected, projectScope from dependencies since we use refs for callbacks
 
   const createROIFromRect = useCallback(async (rect: OSDRect) => {
@@ -453,19 +732,12 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         return;
       }
 
-      // Get the tiled image to get proper dimensions
-      const tiledImage = viewer.world.getItemAt(0);
-      const imageSize = tiledImage.getContentSize();
-      const imageBounds = tiledImage.getBounds();
-      const imageWidth = tiledImage.source.dimensions.x;
-      const imageHeight = tiledImage.source.dimensions.y;
-      
-      console.log('🖼️ Image dimension details:', {
-        contentSize: imageSize,
-        bounds: imageBounds,
-        sourceDimensions: { x: imageWidth, y: imageHeight },
-        viewportBounds: viewer.viewport.getBounds()
-      });
+  // Get the tiled image to get proper dimensions
+  const tiledImage = viewer.world.getItemAt(0);
+  const imageSize = tiledImage.getContentSize();
+  const sourceDimensions = tiledImage.source?.dimensions;
+  const imageWidth = sourceDimensions?.x ?? imageSize.x;
+  const imageHeight = sourceDimensions?.y ?? imageSize.y;
       
       if (!imageSize) {
         console.error('Could not get image size');
@@ -475,31 +747,16 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
       // Convert viewport coordinates to image pixel coordinates
       // OpenSeadragon viewport coordinates are normalized (image width = 1.0)
       // Use source dimensions for accurate pixel coordinates
-      const actualImageWidth = imageWidth || imageSize.x;
-      const actualImageHeight = imageHeight || imageSize.y;
+  const actualImageWidth = imageWidth || imageSize.x;
+  const actualImageHeight = imageHeight || imageSize.y;
       
       const rawGeometry = {
         x: rect.x * actualImageWidth,
-        y: rect.y * actualImageWidth,  // Note: viewport Y is based on image width!
+        y: rect.y * actualImageWidth,
         w: rect.width * actualImageWidth,
         h: rect.height * actualImageWidth
       };
       
-      console.log('🔍 Coordinate conversion:', {
-        viewport: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
-        actualImageSize: { x: actualImageWidth, y: actualImageHeight },
-        contentSize: { x: imageSize.x, y: imageSize.y },
-        raw: rawGeometry,
-        aspectRatio: actualImageHeight / actualImageWidth,
-        viewportYRange: `0 to ${actualImageHeight / actualImageWidth}`,
-        withinBounds: {
-          x: rawGeometry.x >= 0 && rawGeometry.x <= actualImageWidth,
-          y: rawGeometry.y >= 0 && rawGeometry.y <= actualImageHeight,
-          right: (rawGeometry.x + rawGeometry.w) <= actualImageWidth,
-          bottom: (rawGeometry.y + rawGeometry.h) <= actualImageHeight
-        }
-      });
-
       // Clamp to image boundaries - ensure ROI stays within image bounds
       // Clamp start position
       const clampedX = Math.max(0, Math.min(actualImageWidth, rawGeometry.x));
@@ -507,7 +764,7 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
       
       // Clamp end position
       const endX = Math.min(actualImageWidth, rawGeometry.x + rawGeometry.w);
-      const endY = Math.min(actualImageHeight, rawGeometry.y + rawGeometry.h);
+  const endY = Math.min(actualImageHeight, rawGeometry.y + rawGeometry.h);
       
       // Calculate clamped width and height
       const imageGeometry = {
@@ -517,58 +774,48 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         h: Math.max(0, endY - clampedY)
       };
 
-      console.log('📏 Clamping details:', {
-        raw: rawGeometry,
-        clamped: imageGeometry,
-        imageBounds: { x: actualImageWidth, y: actualImageHeight }
-      });
+      // Ensure minimum size based on current zoom level.
+      const zoom = viewer.viewport?.getZoom?.() ?? 1;
+      const baseViewportThreshold = 0.00001; // 0.001% of the image width at zoom level 1
+      const minViewportSize = baseViewportThreshold / Math.max(zoom, 0.01);
+      const zoomAwareMinPx = Math.max(0.5, 3 / Math.max(zoom, 0.1));
+  const minSizePxX = Math.max(zoomAwareMinPx, minViewportSize * actualImageWidth);
+  const minSizePxY = Math.max(zoomAwareMinPx, minViewportSize * actualImageWidth);
 
-      // Ensure minimum size
-      if (imageGeometry.w < 10 || imageGeometry.h < 10) {
-        console.log('❌ ROI too small, skipping creation:', imageGeometry);
+      if (imageGeometry.w < minSizePxX || imageGeometry.h < minSizePxY) {
+        notifyRoiRejected(
+          `ROI too small (~${Math.round(imageGeometry.w)}×${Math.round(imageGeometry.h)} px). Need at least ${minSizePxX.toFixed(1)}×${minSizePxY.toFixed(1)} px at this zoom.`
+        );
         return;
       }
 
-      console.log('✅ Creating ROI with geometry:', imageGeometry);
-      console.log('📐 Viewport rect:', rect);
-      console.log('📏 Image size:', imageSize);
-
-  const name = `ROI ${roisRef.current.length + 1}`;
+  const name = getNextRoiName();
   const newROI = await createImageROI(selected.id, name, imageGeometry, projectScope);
-      
-      console.log('✅ Created ROI:', { 
-        id: newROI.id, 
-        name: newROI.name, 
-        projectId: newROI.projectId, 
-        imageId: newROI.imageId 
-      });
       
       // Add overlay for the new ROI - filter to only keep ROIs for current image/project
       const roiWithOverlay: OpenSeadragonROI = { ...newROI, overlay: undefined };
       assignROIColor(roiWithOverlay);
 
-      setRois(prev => {
+      setViewerRois(prev => {
         const filtered = prev.filter(r => 
           r.imageId === selected.id && r.projectId === projectScope && r.id !== roiWithOverlay.id
         );
-        console.log('🔄 ROI state update:', { 
-          previousCount: prev.length, 
-          afterFilter: filtered.length, 
-          newTotal: filtered.length + 1 
-        });
-        return [...filtered, roiWithOverlay];
+        const next = [...filtered, roiWithOverlay].sort(compareROIOrder);
+        return next;
       });
 
       // Wait a moment for the viewer to stabilize before adding overlay
       setTimeout(() => {
         addROIOverlay(roiWithOverlay);
-        setSelectedROI(roiWithOverlay);
-        highlightROI(roiWithOverlay);
+        setViewerSelectedROI(roiWithOverlay);
+        highlightROIRef.current?.(roiWithOverlay);
+        onROISelect?.(roiWithOverlay);
+        setRoiFeedback(null);
       }, 120);
     } catch (error) {
       console.error('Failed to create ROI:', error);
     }
-  }, [selected, projectScope]);
+  }, [selected, projectScope, onROISelect, notifyRoiRejected, getNextRoiName]);
   
   // Assign to ref so event handlers can access the latest version
   useEffect(() => {
@@ -578,7 +825,6 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
   const addROIOverlay = (roi: OpenSeadragonROI) => {
     const viewer = osdViewerRef.current;
     if (!viewer || !viewer.world || viewer.world.getItemCount() === 0) {
-      console.log('Viewer not ready for ROI overlay');
       return;
     }
 
@@ -590,16 +836,19 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
     if (!imageSize) return;
     
     // Get actual image dimensions
-    const imageWidth = tiledImage.source.dimensions?.x || imageSize.x;
-    const imageHeight = tiledImage.source.dimensions?.y || imageSize.y;
+  const imageWidth = tiledImage.source.dimensions?.x || imageSize.x;
 
     // Create ROI element
     const roiElement = document.createElement('div');
     const color = assignROIColor(roi);
-    const baseBackground = hexToRgba(color, 0.18);
+    const status = (roi.status as PipelineRunStatus | undefined) ?? 'completed';
+    const backgroundIntensity = status === 'completed' ? 0.18 : status === ROI_FAILED_STATUS ? 0.22 : 0.1;
+    const baseBackground = hexToRgba(color, backgroundIntensity);
+    const borderStyle = status === ROI_FAILED_STATUS ? '2px dashed' : '2px solid';
+    const overlayOpacity = status === 'completed' ? '1' : '0.85';
     roiElement.className = 'roi-overlay';
     roiElement.style.cssText = `
-      border: 2px solid ${color};
+      border: ${borderStyle} ${color};
       background: ${baseBackground};
       position: absolute;
       top: 0;
@@ -610,6 +859,7 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
       overflow: visible;
       transition: box-shadow 0.2s ease;
       pointer-events: none;
+      opacity: ${overlayOpacity};
     `;
     roiElement.dataset.color = color;
     roiElement.dataset.roiId = roi.id;
@@ -630,6 +880,13 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
       pointer-events: none;
     `;
     label.textContent = roi.name;
+    if (status !== 'completed') {
+      const statusBadge = document.createElement('span');
+      statusBadge.textContent = ` • ${ROI_STATUS_LABELS[status]}`;
+      statusBadge.style.fontWeight = '500';
+      statusBadge.style.opacity = '0.95';
+      label.appendChild(statusBadge);
+    }
     roiElement.appendChild(label);
 
     // Note: ROI selection is handled by canvas-click handler using findROIAtPoint
@@ -644,22 +901,16 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
     const viewportRect = RectCtor
       ? new RectCtor(
           roi.geometry.x / imageWidth,
-          roi.geometry.y / imageWidth,  // Note: divide by imageWidth, not imageHeight!
+          roi.geometry.y / imageWidth,
           roi.geometry.w / imageWidth,
           roi.geometry.h / imageWidth
         )
       : {
           x: roi.geometry.x / imageWidth,
-          y: roi.geometry.y / imageWidth,  // Note: divide by imageWidth, not imageHeight!
+          y: roi.geometry.y / imageWidth,
           width: roi.geometry.w / imageWidth,
           height: roi.geometry.h / imageWidth
         };
-
-    console.log('Adding ROI overlay:', roi.name, {
-      pixelGeometry: roi.geometry,
-      viewportRect: viewportRect,
-      imageSize: { width: imageWidth, height: imageHeight }
-    });
 
     // Add overlay
     try {
@@ -706,13 +957,6 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
     const viewer = osdViewerRef.current;
     if (!viewer) return;
 
-    console.log('📥 loadROIs called:', { 
-      totalLoaded: loadedROIs.length, 
-      currentImage: selected?.id,
-      currentProject: projectScope,
-      roisData: loadedROIs.map(r => ({ id: r.id, name: r.name, imageId: r.imageId, projectId: r.projectId }))
-    });
-
     // Clear existing overlays
     viewer.clearOverlays();
 
@@ -720,37 +964,36 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
       ? loadedROIs.filter(roi => roi.imageId === selected.id && roi.projectId === projectScope)
       : loadedROIs.filter(roi => roi.projectId === projectScope);
 
-    console.log('🔍 Filtered ROIs:', { 
-      beforeFilter: loadedROIs.length, 
-      afterFilter: filteredROIs.length,
-      filtered: filteredROIs.map(r => ({ id: r.id, name: r.name, imageId: r.imageId }))
-    });
-
     const uniqueROIs = filteredROIs.filter((roi, index, arr) =>
       arr.findIndex(candidate => candidate.id === roi.id) === index
     );
 
+    const orderedROIs = uniqueROIs.slice().sort(compareROIOrder);
+
     // Add overlays for all ROIs
-    const roisWithOverlays: OpenSeadragonROI[] = uniqueROIs.map((roi, index) => {
+    const roisWithOverlays: OpenSeadragonROI[] = orderedROIs.map((roi, index) => {
       const extended: OpenSeadragonROI = { ...roi, overlay: undefined };
       assignROIColor(extended, index);
       return extended;
     });
+
+    syncRoiCounter(roisWithOverlays);
     
     // Wait a bit for the viewer to be fully ready
     setTimeout(() => {
       roisWithOverlays.forEach(roi => {
-        console.log('Adding ROI:', roi.name, roi.geometry);
         addROIOverlay(roi);
       });
 
-      if (selectedROI?.id) {
-        const match = roisWithOverlays.find(r => r.id === selectedROI.id);
+      if (viewerSelectedROI?.id) {
+        const match = roisWithOverlays.find(r => r.id === viewerSelectedROI.id);
         if (match) {
-          setSelectedROI(match);
-  applyNavigatorStyle();
+          setViewerSelectedROI(match);
+          applyNavigatorStyle();
         } else {
+          setViewerSelectedROI(null);
           clearROIHighlights();
+          onROISelect?.(null);
         }
       } else {
         clearROIHighlights();
@@ -763,17 +1006,36 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         delete roiColorsRef.current[id];
       }
     });
-
-    setRois(roisWithOverlays);
+    setViewerRois(roisWithOverlays);
   };
+
+  loadROIsRef.current = loadROIs;
+
+  useEffect(() => {
+    if (!viewerReady) return;
+    if (!selected?.id) return;
+
+    if (externalROIs !== undefined) {
+      loadROIsRef.current?.(externalROIs);
+    } else {
+      fetchImageROIs(selected.id, projectScope).then((loadedROIs) => {
+        loadROIsRef.current?.(loadedROIs);
+      }).catch((error) => {
+        console.error('Failed to fetch ROIs:', error);
+      });
+    }
+  }, [externalROIs, viewerReady, projectScope, selected?.id]);
 
   const highlightROI = useCallback((roi: OpenSeadragonROI) => {
     // Update all ROI overlays to show selection state
     roisRef.current.forEach(r => {
       if (!r.overlay) return;
       const color = assignROIColor(r);
-      const baseBg = hexToRgba(color, 0.18);
-      const highlightBg = hexToRgba(color, 0.32);
+      const status = (r.status as PipelineRunStatus | undefined) ?? 'completed';
+      const baseAlpha = status === 'completed' ? 0.18 : status === ROI_FAILED_STATUS ? 0.22 : 0.1;
+      const highlightAlpha = Math.min(baseAlpha + 0.16, 0.45);
+      const baseBg = hexToRgba(color, baseAlpha);
+      const highlightBg = hexToRgba(color, highlightAlpha);
       const isTarget = r.id === roi.id;
       r.overlay.style.background = isTarget ? highlightBg : baseBg;
       r.overlay.style.borderColor = color;
@@ -794,7 +1056,9 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
     roisRef.current.forEach(roi => {
       if (!roi.overlay) return;
       const color = assignROIColor(roi);
-      roi.overlay.style.background = hexToRgba(color, 0.18);
+      const status = (roi.status as PipelineRunStatus | undefined) ?? 'completed';
+      const baseAlpha = status === 'completed' ? 0.18 : status === ROI_FAILED_STATUS ? 0.22 : 0.1;
+      roi.overlay.style.background = hexToRgba(color, baseAlpha);
       roi.overlay.style.borderColor = color;
       roi.overlay.style.boxShadow = 'none';
       const labelEl = roi.overlay.querySelector('.roi-label') as HTMLElement | null;
@@ -808,16 +1072,40 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
     clearROIHighlightsRef.current = clearROIHighlights;
   }, [clearROIHighlights]);
 
+  useEffect(() => {
+    if (externalSelectedROI === undefined) {
+      return;
+    }
+
+    if (externalSelectedROI === null) {
+      if (viewerSelectedROI) {
+        setViewerSelectedROI(null);
+        clearROIHighlights();
+      }
+      return;
+    }
+
+    if (viewerSelectedROI?.id === externalSelectedROI.id) {
+      return;
+    }
+
+    const match = roisRef.current.find(r => r.id === externalSelectedROI.id);
+    if (match) {
+      setViewerSelectedROI(match);
+      highlightROIRef.current?.(match);
+    }
+  }, [externalSelectedROI, viewerSelectedROI, viewerRois, clearROIHighlights]);
+
   const findROIAtPoint = useCallback((point: OSDPoint): OpenSeadragonROI | null => {
     const viewer = osdViewerRef.current;
     if (!viewer) return null;
 
-    const tiledImage = viewer.world.getItemAt(0);
-    const imageSize = tiledImage.getContentSize();
-    const imageWidth = tiledImage.source.dimensions?.x || imageSize.x;
+  const tiledImage = viewer.world.getItemAt(0);
+  if (!tiledImage) return null;
+  const imageSize = tiledImage.getContentSize();
+  if (!imageSize) return null;
+  const imageWidth = tiledImage.source.dimensions?.x || imageSize.x;
     
-    // Convert viewport point to pixel coordinates
-    // Both X and Y use imageWidth as the scale
     const imagePoint = {
       x: point.x * imageWidth,
       y: point.y * imageWidth
@@ -848,15 +1136,53 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
       }
       delete roiColorsRef.current[roi.id];
       
-      setRois(prev => prev.filter(r => r.id !== roi.id));
-      if (selectedROI?.id === roi.id) {
-        setSelectedROI(null);
+      setViewerRois(prev => prev.filter(r => r.id !== roi.id));
+      if (viewerSelectedROI?.id === roi.id) {
+        setViewerSelectedROI(null);
+        onROISelect?.(null);
       }
       clearROIHighlights();
     } catch (error) {
       console.error('Failed to delete ROI:', error);
     }
   };
+
+  useEffect(() => {
+    if (!selected?.id || !osdViewerRef.current) return;
+
+    const imageId = selected.id;
+
+    const hasInFlight = viewerRois.some(roi =>
+      isInFlightStatus((roi.status as PipelineRunStatus | undefined) ?? undefined)
+    );
+
+    if (!hasInFlight) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+  const latest = await fetchImageROIs(imageId, projectScope);
+        if (!cancelled) {
+          loadROIsRef.current?.(latest);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Failed to refresh ROI statuses:', error);
+        }
+      }
+    };
+
+    const intervalId = window.setInterval(poll, 4000);
+    poll();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [viewerRois, selected?.id, projectScope]);
 
   return (
     <div className="flex h-full bg-gray-50">
@@ -875,7 +1201,15 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
               }`}
               title={s.name}
             >
-              <img src={s.thumbnailUrl} alt={s.name} className="w-full h-16 object-cover" />
+              <div
+                className={`w-full h-16 flex items-center justify-center text-xs font-semibold ${
+                  s.dziManifestUrl
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'bg-gray-100 text-gray-500'
+                }`}
+              >
+                {s.dziManifestUrl ? 'Tiles ready' : 'Waiting for tiles'}
+              </div>
               <div className="p-2 text-xs text-left">
                 <div className="font-medium truncate">{s.name}</div>
               </div>
@@ -916,6 +1250,98 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
                 </div>
               </div>
             )}
+
+            {viewerError && !isLoading && (
+              <div className="absolute inset-0 bg-white/90 rounded-lg flex flex-col items-center justify-center z-20 px-6 text-center space-y-4">
+                <div className="text-gray-700 text-sm leading-relaxed">{viewerError}</div>
+                <button
+                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg shadow hover:bg-blue-700"
+                  onClick={handleRetryLoad}
+                >
+                  Retry loading slide
+                </button>
+              </div>
+            )}
+
+            {showTileGenerationOverlay && (
+              <div className="absolute inset-0 bg-white/95 rounded-lg flex items-center justify-center z-30 px-6 py-8 text-center">
+                <div className="max-w-md space-y-5">
+                  <div className="flex flex-col items-center space-y-3">
+                    {tileJobFailed ? (
+                      <div className="w-14 h-14 rounded-full bg-rose-50 border border-rose-200 text-rose-500 flex items-center justify-center text-2xl font-semibold">
+                        !
+                      </div>
+                    ) : (
+                      <div className="w-14 h-14 rounded-full border-2 border-blue-100 flex items-center justify-center">
+                        <span className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-lg font-semibold text-slate-800">
+                        {tileJobFailed
+                          ? 'Tile generation failed'
+                          : tileJobInFlight
+                            ? 'Generating Deep Zoom tiles'
+                            : 'Waiting for Deep Zoom tiles'}
+                      </p>
+                      <p className="text-sm text-slate-600">
+                        {tileJobFailed
+                          ? 'The preprocessing job reported an error. Resolve it, then refresh the slide status.'
+                          : tileJobInFlight
+                            ? 'We are building the Deep Zoom pyramid so you can explore this slide. This usually takes a few minutes.'
+                            : 'Tile generation has not started yet. Kick off preprocessing or refresh the slide status to check again.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="text-sm text-left space-y-2 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500 font-medium">Status</span>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${tileStatusBadgeClass}`}>
+                        {tileJobInFlight && (
+                          <span className="inline-flex items-center justify-center w-2.5 h-2.5">
+                            <span className="w-2 h-2 border-[2px] border-current border-t-transparent rounded-full animate-spin" />
+                          </span>
+                        )}
+                        <span>{tileStatusLabel}</span>
+                      </span>
+                    </div>
+                    {tileJob?.jobId && (
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span className="text-slate-500 font-medium">Job ID</span>
+                        <code className="text-xs bg-white px-2 py-0.5 rounded border border-slate-200">{tileJob.jobId}</code>
+                      </div>
+                    )}
+                    {tileJob?.updatedAt && (
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span className="text-slate-500 font-medium">Last update</span>
+                        <span className="text-xs text-slate-700">{formatTimestamp(tileJob.updatedAt) ?? '—'}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {tileJob?.error && (
+                    <div className="text-sm text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-4 py-3 text-left">
+                      {tileJob.error}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-3 justify-center">
+                    <button
+                      className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg shadow hover:bg-blue-700 disabled:bg-blue-300 disabled:hover:bg-blue-300 disabled:cursor-not-allowed"
+                      disabled={!onRefreshSlide || isRefreshingSlideStatus}
+                      onClick={handleRefreshSlideStatus}
+                    >
+                      {isRefreshingSlideStatus ? 'Checking...' : 'Check status again'}
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-slate-500">
+                    We will automatically open the slide as soon as its Deep Zoom manifest is ready. You can continue working while preprocessing finishes.
+                  </p>
+                </div>
+              </div>
+            )}
             
             {/* Zoom Controls - Top Left Corner */}
             <div className="absolute top-4 left-4 z-10 flex flex-col bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden">
@@ -949,6 +1375,13 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
                 <div className="text-xs opacity-90">Release to finish</div>
               </div>
             )}
+
+            {roiFeedback && (
+              <div className="absolute bottom-4 right-4 z-20 max-w-xs bg-slate-900/80 text-white px-4 py-3 rounded-lg shadow-lg">
+                <div className="text-sm font-semibold">ROI not created</div>
+                <div className="text-xs mt-1 leading-snug">{roiFeedback}</div>
+              </div>
+            )}
           </div>
 
           {/* Instructions */}
@@ -967,16 +1400,21 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
         <div className="p-4 border-b border-gray-100">
           <h3 className="text-sm font-semibold text-gray-700">Regions of Interest</h3>
           <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
-            <span>{rois.length} ROI{rois.length !== 1 ? 's' : ''}</span>
-            {selectedROI && (
-              <span className="text-blue-600 font-medium">Selected: {selectedROI.name}</span>
+            <span>{viewerRois.length} ROI{viewerRois.length !== 1 ? 's' : ''}</span>
+            {viewerSelectedROI && (
+              <span className="text-blue-600 font-medium">Selected: {viewerSelectedROI.name}</span>
             )}
           </div>
+          {anyRoiInFlight && (
+            <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2">
+              ROI processing is in progress. Status updates will appear automatically.
+            </div>
+          )}
         </div>
 
         {/* ROI List */}
         <div className="flex-1 p-4 overflow-y-auto">
-          {rois.length === 0 ? (
+          {viewerRois.length === 0 ? (
             <div className="text-center py-8">
               <div className="text-gray-400 mb-2">
                 <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -988,50 +1426,92 @@ export default function OpenSeadragonSlideViewer({ slides, selectedId, onSelect,
             </div>
           ) : (
             <div className="space-y-2">
-              {rois.map((roi) => (
-                <div 
-                  key={roi.id}
-                  className={`p-3 rounded-lg border-2 cursor-pointer transition-all duration-200 ${
-                    selectedROI?.id === roi.id 
-                      ? 'border-blue-500 bg-blue-50 shadow-sm' 
-                      : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
-                  }`}
-                  onClick={() => {
-                    setSelectedROI(roi);
-                    highlightROI(roi);
-                  }}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="font-medium text-sm text-gray-800">{roi.name}</div>
-                    {selectedROI?.id === roi.id && (
-                      <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+              {viewerRois.map((roi) => {
+                const status = (roi.status as PipelineRunStatus | undefined) ?? 'completed';
+                const inFlight = isInFlightStatus(status);
+                const isFailed = status === ROI_FAILED_STATUS;
+                const isSelected = viewerSelectedROI?.id === roi.id;
+                const statusClasses = ROI_STATUS_BADGE_CLASSES[status];
+                const statusLabel = ROI_STATUS_LABELS[status];
+
+                return (
+                  <div 
+                    key={roi.id}
+                    className={`p-3 rounded-lg border-2 cursor-pointer transition-all duration-200 ${
+                      isSelected
+                        ? 'border-blue-500 bg-blue-50 shadow-sm'
+                        : isFailed
+                          ? 'border-rose-300 bg-rose-50/60 hover:border-rose-300 hover:bg-rose-50'
+                          : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
+                    }`}
+                    onClick={() => {
+                      setViewerSelectedROI(roi);
+                      highlightROI(roi);
+                      onROISelect?.(roi);
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="font-medium text-sm text-gray-800">{roi.name}</div>
+                      <div className={`inline-flex items-center gap-1 px-2 py-[2px] rounded-full text-[11px] font-semibold ${statusClasses}`}>
+                        {inFlight && (
+                          <span className="inline-flex items-center justify-center w-2.5 h-2.5">
+                            <span className="w-2 h-2 border-[2px] border-current border-t-transparent rounded-full animate-spin" />
+                          </span>
+                        )}
+                        <span>{statusLabel}</span>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-500 space-y-1">
+                      <div>Size: {Math.round(roi.geometry.w)} × {Math.round(roi.geometry.h)} px</div>
+                      <div>Position: ({Math.round(roi.geometry.x)}, {Math.round(roi.geometry.y)})</div>
+                      {roi.jobId && (
+                        <div className="text-[11px] text-gray-400">Job ID: {roi.jobId}</div>
+                      )}
+                    </div>
+                    {isFailed && roi.error && (
+                      <div className="mt-2 text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-md px-2 py-1">
+                        {roi.error}
+                      </div>
                     )}
                   </div>
-                  <div className="text-xs text-gray-500 space-y-1">
-                    <div>Size: {Math.round(roi.geometry.w)} × {Math.round(roi.geometry.h)} px</div>
-                    <div>Position: ({Math.round(roi.geometry.x)}, {Math.round(roi.geometry.y)})</div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
 
         {/* ROI Actions */}
-        {selectedROI && (
+        {viewerSelectedROI && (
           <div className="p-4 border-t border-gray-100 bg-gray-50">
-            <div className="space-y-2">
+            <div className="space-y-3">
               {onAnalyzeROI && selected && (
-                <button
-                  className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors text-sm"
-                  onClick={() => onAnalyzeROI(selectedROI, selected)}
-                >
-                  Analyze ROI
-                </button>
+                <>
+                  <button
+                    className={`w-full px-3 py-2 rounded-lg font-medium transition-colors text-sm ${
+                      selectedROIIsReady
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                        : 'bg-blue-200 text-blue-700 cursor-not-allowed'
+                    }`}
+                    disabled={!selectedROIIsReady}
+                    onClick={() => onAnalyzeROI(viewerSelectedROI, selected)}
+                  >
+                    {selectedROIIsReady ? 'Update h5ad' : 'ROI Not Ready'}
+                  </button>
+                  {!selectedROIIsReady && !selectedROIIsFailed && (
+                    <p className="text-xs text-gray-500">
+                      The ROI is still being processed. This usually takes a few minutes—feel free to keep exploring.
+                    </p>
+                  )}
+                  {selectedROIIsFailed && viewerSelectedROI?.error && (
+                    <p className="text-xs text-rose-600">
+                      Processing failed: {viewerSelectedROI.error}
+                    </p>
+                  )}
+                </>
               )}
               <button
                 className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors text-sm"
-                onClick={() => deleteROI(selectedROI)}
+                onClick={() => deleteROI(viewerSelectedROI)}
               >
                 Delete ROI
               </button>

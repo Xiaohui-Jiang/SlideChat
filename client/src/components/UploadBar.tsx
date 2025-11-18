@@ -18,22 +18,9 @@ export default function UploadBar({ onAddSlide }: Props) {
     if (!file) return;
 
     const ext = (file.name.split('.').pop() || '').toLowerCase();
-    const isImage = file.type.startsWith('image/');
 
     try {
-      if (isImage) {
-        // Immediate client-side preview for standard images
-        const url = URL.createObjectURL(file);
-        const thumb = URL.createObjectURL(file); // keep simple; you can generate a small canvas later
-        onAddSlide({
-          id: crypto.randomUUID(),
-          name: file.name,
-          imageUrl: url,
-          thumbnailUrl: thumb,
-          sourceType: 'local',
-        });
-      } else if (ext === 'svs' || ext === 'tif' || ext === 'tiff') {
-        // Send to server for conversion/preview creation
+      if (file.type.startsWith('image/') || ['svs', 'tif', 'tiff'].includes(ext)) {
         const uploaded = await uploadSlideToServer(file);
         onAddSlide({ ...uploaded, sourceType: 'uploaded' });
       } else {

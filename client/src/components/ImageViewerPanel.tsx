@@ -12,6 +12,7 @@ interface ImageViewerPanelProps {
   onROIUpdate?: (roiId: string, updates: Partial<ROI>) => void;
   onROIDelete?: (roiId: string) => void;
   onAnalyzeROI?: (roi: any, image: any) => void;
+  onRefreshSlide?: (slideId: string) => Promise<void> | void;
 }
 
 export default function ImageViewerPanel({ 
@@ -23,7 +24,8 @@ export default function ImageViewerPanel({
   onROISelect,
   onROIUpdate,
   onROIDelete,
-  onAnalyzeROI 
+  onAnalyzeROI,
+  onRefreshSlide,
 }: ImageViewerPanelProps) {
   const [activeTab, setActiveTab] = useState<'viewer' | 'code'>('viewer');
 
@@ -57,7 +59,7 @@ export default function ImageViewerPanel({
               : 'text-gray-600 hover:text-gray-800'
           }`}
         >
-          Code Canvas
+          {/* Code Canvas */}
         </button>
       </div>
 
@@ -69,7 +71,14 @@ export default function ImageViewerPanel({
             selectedId={selectedImage.id}
             onSelect={() => {}}
             projectId={selectedImage.projectId}
+            rois={rois}
+            selectedROI={selectedROI}
+            onROICreate={onROICreate}
+            onROISelect={onROISelect}
+            onROIUpdate={onROIUpdate}
+            onROIDelete={onROIDelete}
             onAnalyzeROI={onAnalyzeROI}
+            onRefreshSlide={onRefreshSlide}
           />
         )}
 
