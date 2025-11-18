@@ -408,3 +408,41 @@ export async function getSupportedFormats() {
     })
   );
 }
+
+// Simple chat API for general conversation
+export async function simpleChat(
+  message: string, 
+  sessionId?: string,
+  currentJobInfo?: { jobId: string; jobName: string }
+): Promise<string> {
+  try {
+    const body: any = {
+      message,
+      session_id: sessionId || 'default'
+    };
+    
+    // Include current job info if available
+    if (currentJobInfo) {
+      body.current_job = {
+        job_id: currentJobInfo.jobId,
+        job_name: currentJobInfo.jobName
+      };
+    }
+    
+    const res = await fetch(`${API}/multiagent/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      throw new Error(`Chat failed: ${res.status}`);
+    }
+
+    const data = await res.json();
+    return data.response || "I'm here to help! Type 'start' to begin an analysis.";
+  } catch (error) {
+    console.error('Chat error:', error);
+    return "I'm your Biological Analysis Assistant. Type 'start' to begin an analysis!";
+  }
+}
