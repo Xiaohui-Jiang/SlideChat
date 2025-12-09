@@ -1,0 +1,36 @@
+{
+  "id": "1d96b0d6-2298-4293-93ec-a8f158acdd55",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1765229532591
+  },
+  "createdAt": 1765229532613,
+  "updatedAt": 1765229534261,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "35339bfb-3655-4db9-9418-bb89849aab11",
+      "role": "user",
+      "content": "hello",
+      "name": null,
+      "metadata": {
+        "timestamp": 1765229532591
+      },
+      "createdAt": 1765229532613,
+      "tokenEstimate": 2
+    },
+    {
+      "id": "e268ec40-b6ed-460e-bb8a-ad95da3f1c8a",
+      "role": "assistant",
+      "content": "Hello! How can I assist you today with your biological slide analysis?",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1765229534261,
+      "tokenEstimate": 18
+    }
+  ]
+}

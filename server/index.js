@@ -2,9 +2,11 @@
 // Enhanced server with LangChain integration - toy example
 import express from 'express';
 import cors from 'cors';
+import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
+import sharp from 'sharp';
 
 // Import LangChain tools
 import {
@@ -55,6 +57,69 @@ app.use('/public', express.static(path.join(process.cwd(), 'public')));
 app.use('/api/projects', projectsRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/xenium', xeniumRoutes);
+
+const upload = multer({ dest: path.join(process.cwd(), 'uploads') });
+
+const HUMAN_KIDNEY_DIR = path.join(process.cwd(), 'public', 'slides', 'human_kidney');
+const HUMAN_KIDNEY_DATASET_DIR = path.resolve(process.cwd(), '..', 'Human_Kidney_test_data');
+
+async function ensureKidneySlideAssets() {
+  try {
+    if (!fs.existsSync(HUMAN_KIDNEY_DIR)) {
+      fs.mkdirSync(HUMAN_KIDNEY_DIR, { recursive: true });
+    }
+
+    if (!fs.existsSync(HUMAN_KIDNEY_DATASET_DIR)) {
+      console.warn('⚠️ Human kidney dataset directory not found, skipping preview generation');
+      return;
+    }
+
+    const files = fs.readdirSync(HUMAN_KIDNEY_DATASET_DIR);
+    const tiffName = files.find((name) => /\.tiff?$/.test(name.toLowerCase()));
+
+    if (!tiffName) {
+      console.warn('⚠️ No TIFF found in Human_Kidney_test_data, skipping preview generation');
+      return;
+    }
+
+    const sourceTiff = path.join(HUMAN_KIDNEY_DATASET_DIR, tiffName);
+    const previewPath = path.join(HUMAN_KIDNEY_DIR, 'human_kidney_he_preview.jpg');
+    const thumbnailPath = path.join(HUMAN_KIDNEY_DIR, 'thumbnail.jpg');
+    const symlinkPath = path.join(HUMAN_KIDNEY_DIR, 'human_kidney_he.ome.tif');
+
+    if (!fs.existsSync(symlinkPath)) {
+      try {
+        fs.symlinkSync(sourceTiff, symlinkPath);
+      } catch (error) {
+        console.warn('⚠️ Failed to create symlink to original TIFF:', error.message);
+      }
+    }
+
+    const sharpSource = sharp(sourceTiff, { limitInputPixels: false });
+
+    if (!fs.existsSync(previewPath)) {
+      console.log('🖼️ Generating kidney preview JPEG (this may take a minute)...');
+      await sharpSource
+        .clone()
+        .resize({ width: 8000, withoutEnlargement: true })
+        .jpeg({ quality: 85 })
+        .toFile(previewPath);
+      console.log('✅ Kidney preview generated at', previewPath);
+    }
+
+    if (!fs.existsSync(thumbnailPath)) {
+      console.log('🖼️ Generating kidney thumbnail...');
+      await sharpSource
+        .clone()
+        .resize({ width: 600, withoutEnlargement: true })
+        .jpeg({ quality: 75 })
+        .toFile(thumbnailPath);
+      console.log('✅ Kidney thumbnail generated at', thumbnailPath);
+    }
+  } catch (error) {
+    console.warn('⚠️ Failed to prepare kidney slide assets:', error.message);
+  }
+}
 
 const SUMMARY_MODEL =
   process.env.OPENAI_SUMMARY_MODEL ||
@@ -1043,7 +1108,7 @@ const deleteRoiHandler = async (req, res) => {
       console.warn(`Failed to remove ROI metadata for ${projectId}/${imageId}/${roiName}:`, metadataError.message);
     }
 
-  res.json({ success: true, pipelineSyncAttempted: datasetReady });
+    res.json({ success: true, pipelineSyncAttempted: datasetReady });
   } catch (error) {
     const wrapped = handlePipelineError(error);
     res.status(wrapped.statusCode).json({ error: wrapped.message, details: wrapped.details || null });
@@ -1426,10 +1491,265 @@ app.get('/api/examples', (req, res) => {
   });
 });
 
+// ============================================================================
+// Python Multiagent Proxy Endpoints
+// ============================================================================
+
+const PYTHON_MULTIAGENT_URL = process.env.PYTHON_MULTIAGENT_URL || 'http://localhost:8000';
+
+/**
+ * POST /api/multiagent/analyze
+ * Submit a new analysis job to the Python multiagent service
+ */
+app.post('/api/multiagent/analyze', async (req, res) => {
+  try {
+    console.log('📤 Forwarding analysis request to Python multiagent service');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000); // 60 seconds
+
+    const response = await fetch(`${PYTHON_MULTIAGENT_URL}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeout);
+    console.log('Python response status:', response.status, response.statusText);
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error('Python error response:', error);
+      return res.status(response.status).json(error);
+    }
+
+    const result = await response.json();
+    console.log('Python response data:', JSON.stringify(result, null, 2));
+    console.log(`✅ Analysis job created: ${result.job_id}`);
+
+    res.json(result);
+    console.log('Sent response to frontend');
+  } catch (error) {
+    console.error('❌ Error forwarding to multiagent service:', error);
+    res.status(500).json({
+      error: 'Failed to communicate with multiagent service',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/multiagent/status/:jobId
+ * Check the status of an analysis job
+ */
+app.get('/api/multiagent/status/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000); // 30 seconds
+
+    const response = await fetch(`${PYTHON_MULTIAGENT_URL}/api/status/${jobId}`, {
+      signal: controller.signal
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      const error = await response.json();
+      return res.status(response.status).json(error);
+    }
+
+    const result = await response.json();
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error checking job status:', error);
+    res.status(500).json({
+      error: 'Failed to check job status',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/multiagent/result/:jobId
+ * Get the result of a completed analysis job
+ */
+app.get('/api/multiagent/result/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const response = await fetch(`${PYTHON_MULTIAGENT_URL}/api/result/${jobId}`);
+
+    if (!response.ok) {
+      const error = await response.json();
+      return res.status(response.status).json(error);
+    }
+
+    const result = await response.json();
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error fetching job result:', error);
+    res.status(500).json({
+      error: 'Failed to fetch job result',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/multiagent/download/:jobId/:fileType
+ * Download result files (report, pdf, or log)
+ */
+app.get('/api/multiagent/download/:jobId/:fileType', async (req, res) => {
+  try {
+    const { jobId, fileType } = req.params;
+    const response = await fetch(`${PYTHON_MULTIAGENT_URL}/api/download/${jobId}/${fileType}`);
+
+    if (!response.ok) {
+      const error = await response.json();
+      return res.status(response.status).json(error);
+    }
+
+    // Forward the file response
+    res.setHeader('Content-Type', response.headers.get('content-type'));
+    res.setHeader('Content-Disposition', response.headers.get('content-disposition'));
+
+    const buffer = await response.arrayBuffer();
+    res.send(Buffer.from(buffer));
+  } catch (error) {
+    console.error('❌ Error downloading file:', error);
+    res.status(500).json({
+      error: 'Failed to download file',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/multiagent/jobs
+ * List all analysis jobs
+ */
+app.get('/api/multiagent/jobs', async (req, res) => {
+  try {
+    const response = await fetch(`${PYTHON_MULTIAGENT_URL}/api/jobs`);
+
+    if (!response.ok) {
+      const error = await response.json();
+      return res.status(response.status).json(error);
+    }
+
+    const result = await response.json();
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error listing jobs:', error);
+    res.status(500).json({
+      error: 'Failed to list jobs',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/multiagent/messages/:jobId
+ * Get interaction messages from a job
+ */
+app.get('/api/multiagent/messages/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000); // 30 seconds
+
+    const response = await fetch(`${PYTHON_MULTIAGENT_URL}/api/messages/${jobId}`, {
+      signal: controller.signal
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      const error = await response.json();
+      return res.status(response.status).json(error);
+    }
+
+    const result = await response.json();
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error fetching messages:', error);
+    res.status(500).json({
+      error: 'Failed to fetch messages',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/multiagent/response/:jobId
+ * Submit a user response to an agent question
+ */
+app.post('/api/multiagent/response/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const response = await fetch(`${PYTHON_MULTIAGENT_URL}/api/response/${jobId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body)
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      return res.status(response.status).json(error);
+    }
+
+    const result = await response.json();
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error submitting response:', error);
+    res.status(500).json({
+      error: 'Failed to submit response',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/multiagent/chat
+ * Simple chat endpoint for general conversation with GPT
+ */
+app.post('/api/multiagent/chat', async (req, res) => {
+  try {
+    const response = await fetch(`${PYTHON_MULTIAGENT_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body)
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      return res.status(response.status).json(error);
+    }
+
+    const result = await response.json();
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Error in chat:', error);
+    res.status(500).json({
+      error: 'Failed to chat',
+      message: error.message
+    });
+  }
+});
+
+// ============================================================================
+// End Python Multiagent Proxy Endpoints
+// ============================================================================
+
 // Initialize server and start
 const PORT = process.env.PORT || 5050;
 
 async function startServer() {
+  await ensureKidneySlideAssets();
   await ensureJobQueueInitialized();
   await initializeServer();
 

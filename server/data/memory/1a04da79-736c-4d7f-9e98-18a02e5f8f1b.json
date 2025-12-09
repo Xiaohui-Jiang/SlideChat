@@ -1,0 +1,36 @@
+{
+  "id": "1a04da79-736c-4d7f-9e98-18a02e5f8f1b",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1763447252023
+  },
+  "createdAt": 1763447252044,
+  "updatedAt": 1763447255100,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "081c88b2-54d1-46a4-9ab9-eebc373ba481",
+      "role": "user",
+      "content": "111",
+      "name": null,
+      "metadata": {
+        "timestamp": 1763447252023
+      },
+      "createdAt": 1763447252045,
+      "tokenEstimate": 1
+    },
+    {
+      "id": "467200f9-bff5-48ca-983b-9043a7c4e189",
+      "role": "assistant",
+      "content": "It seems like your message might be incomplete or unclear. Could you please provide more details or specify what you would like assistance with regarding slide analysis, ROI creation, or biological features?",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1763447255100,
+      "tokenEstimate": 52
+    }
+  ]
+}

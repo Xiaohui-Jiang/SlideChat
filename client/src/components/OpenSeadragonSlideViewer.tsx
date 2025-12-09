@@ -1494,8 +1494,9 @@ export default function OpenSeadragonSlideViewer({
                     }`}
                     disabled={!selectedROIIsReady}
                     onClick={() => onAnalyzeROI(viewerSelectedROI, selected)}
+                    title={selectedROIIsReady ? 'View ROI details and use Multiagent panel for analysis' : 'ROI is still being processed'}
                   >
-                    {selectedROIIsReady ? 'Update h5ad' : 'ROI Not Ready'}
+                    {selectedROIIsReady ? '📊 Analyze ROI' : 'ROI Not Ready'}
                   </button>
                   {!selectedROIIsReady && !selectedROIIsFailed && (
                     <p className="text-xs text-gray-500">

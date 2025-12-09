@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { ChatPanel } from './ChatPanel';
 import {
     submitAnalysis,
@@ -23,12 +23,16 @@ interface ChatMultiagentProps {
     onResultUpdate?: (result: JobResult | null) => void;
 }
 
+export interface ChatMultiagentRef {
+    addSystemMessage: (message: string, level?: 'info' | 'success' | 'error') => void;
+}
+
 // Helper to generate sequential job names
 function generateJobName(existingCount: number): string {
     return `Job ${existingCount + 1}`;
 }
 
-export function ChatMultiagent({ onResultUpdate }: ChatMultiagentProps = {}) {
+export const ChatMultiagent = forwardRef<ChatMultiagentRef, ChatMultiagentProps>(({ onResultUpdate }, ref) => {
     const [currentJobId, setCurrentJobId] = useState<string | null>(null);
     const [currentJobName, setCurrentJobName] = useState<string | null>(null);
     const [result, setResult] = useState<JobResult | null>(null);
@@ -73,6 +77,22 @@ export function ChatMultiagent({ onResultUpdate }: ChatMultiagentProps = {}) {
     useEffect(() => {
         localStorage.setItem('job_names', JSON.stringify(jobNames));
     }, [jobNames]);
+
+    // Expose methods to parent via ref
+    useImperativeHandle(ref, () => ({
+        addSystemMessage: (message: string, level: 'info' | 'success' | 'error' = 'info') => {
+            const emoji = level === 'success' ? '✓' : level === 'error' ? '✗' : 'ℹ️';
+            setChatMessages(prev => [
+                ...prev,
+                {
+                    id: crypto.randomUUID(),
+                    role: 'assistant',
+                    content: `${emoji} ${message}`,
+                    ts: Date.now(),
+                }
+            ]);
+        }
+    }));
 
     // Load historical jobs
     useEffect(() => {
@@ -761,4 +781,4 @@ export function ChatMultiagent({ onResultUpdate }: ChatMultiagentProps = {}) {
             </div>
         </div>
     );
-}
+});

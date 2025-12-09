@@ -3,7 +3,7 @@
   "name": "Human Kidney Demo",
   "description": "Sample dataset",
   "createdAt": 1762920285977,
-  "updatedAt": 1763441062223,
+  "updatedAt": 1765252859650,
   "images": {
     "kidney_demo": {
       "id": "kidney_demo",
@@ -50,12 +50,12 @@
           "uploadedAt": 1762920503151
         },
         "image": {
-          "originalName": "Xenium_V1_Human_Kidney_FFPE_Protein_updated_he_image.ome (1).tif",
-          "storedName": "1763269643222-Xenium_V1_Human_Kidney_FFPE_Protein_updated_he_image.ome_1_.tif",
-          "path": "/Users/cth/Desktop/slidechat/server/data/projects/229092fc-61dc-45b7-b8d2-e8da30a918eb/files/kidney_demo/1763269643222-Xenium_V1_Human_Kidney_FFPE_Protein_updated_he_image.ome_1_.tif",
+          "originalName": "1763269643222-Xenium_V1_Human_Kidney_FFPE_Protein_updated_he_image.ome_1_.tif",
+          "storedName": "1765252777939-1763269643222-Xenium_V1_Human_Kidney_FFPE_Protein_updated_he_image.ome_1_.tif",
+          "path": "/Users/jiachengsang/Desktop/Biological_agent/slidechat/server/data/projects/229092fc-61dc-45b7-b8d2-e8da30a918eb/files/kidney_demo/1765252777939-1763269643222-Xenium_V1_Human_Kidney_FFPE_Protein_updated_he_image.ome_1_.tif",
           "size": 3720697771,
           "mimeType": "image/tiff",
-          "uploadedAt": 1763269652595
+          "uploadedAt": 1765252781847
         }
       },
       "status": {
@@ -156,6 +156,42 @@
         "updatedAt": 1763264040010
       }
     },
-    "kidney_demo": {}
+    "kidney_demo": {
+      "ROI_1": {
+        "name": "ROI_1",
+        "geometry": {
+          "x": 7881.508535953463,
+          "y": 30515.635739119687,
+          "w": 6060.162114125874,
+          "h": 3684.0454439160894
+        },
+        "polygon": [
+          [
+            7881.508535953463,
+            30515.635739119687
+          ],
+          [
+            13941.670650079337,
+            30515.635739119687
+          ],
+          [
+            13941.670650079337,
+            34199.68118303578
+          ],
+          [
+            7881.508535953463,
+            34199.68118303578
+          ]
+        ],
+        "polygon_centroids": [],
+        "stats": null,
+        "status": "completed",
+        "error": null,
+        "jobId": null,
+        "version": 1,
+        "createdAt": 1765252859650,
+        "updatedAt": 1765252859650
+      }
+    }
   }
 }

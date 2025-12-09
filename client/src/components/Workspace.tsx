@@ -3,6 +3,7 @@ import { ProjectPanel } from './ProjectPanel';
 import ImageViewerPanel from './ImageViewerPanel';
 import { LogResultsPanel } from './LogResultsPanel';
 import { ChatPanel } from './ChatPanel';
+import { ChatMultiagent, type ChatMultiagentRef } from './ChatMultiagent';
 import type {
   Project,
   Image,
@@ -32,7 +33,7 @@ export const Workspace: React.FC = () => {
   const [images, setImages] = useState<Image[]>([]);
   const [rois, setROIs] = useState<ROI[]>([]);
   const [requirements, setRequirements] = useState<ProjectRequirements | null>(null);
-  
+
   // Selection state
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedImage, setSelectedImage] = useState<Image | null>(null);
@@ -51,6 +52,10 @@ export const Workspace: React.FC = () => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [results, setResults] = useState<AnalysisResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const [multiagentResult, setMultiagentResult] = useState<any>(null);
+  
+  // Ref to communicate with ChatMultiagent
+  const chatMultiagentRef = useRef<ChatMultiagentRef | null>(null);
 
   // Utility functions
   const addLog = useCallback((level: LogEntry['level'], message: string) => {
@@ -61,6 +66,11 @@ export const Workspace: React.FC = () => {
       message
     };
     setLogs(prev => [...prev, logEntry]);
+    
+    // Also send to ChatMultiagent if available
+    if (chatMultiagentRef.current?.addSystemMessage) {
+      chatMultiagentRef.current.addSystemMessage(message, level);
+    }
   }, []);
 
   const addResult = useCallback((result: Omit<AnalysisResult, 'id' | 'timestamp'>) => {
@@ -110,7 +120,7 @@ export const Workspace: React.FC = () => {
       const project = await createProjectOnServer(name, description);
       setProjects(prev => [...prev, project]);
       addLog('info', `Created new project: ${project.name}`);
-  await handleProjectSelect(project);
+      await handleProjectSelect(project);
     } catch (error) {
       console.error('Failed to create project:', error);
       addLog('error', 'Failed to create project');
@@ -256,7 +266,7 @@ export const Workspace: React.FC = () => {
 
     try {
       addLog('info', `Uploading ${params.fileType} for image ${params.imageId}`);
-      
+
       const result = await uploadProjectFile({
         projectId: selectedProject.id,
         imageId: params.imageId,
@@ -264,9 +274,9 @@ export const Workspace: React.FC = () => {
         file: params.file,
         label: params.label
       });
-      
+
       addLog('success', `Uploaded ${params.fileType} file`);
-      
+
       await handleProjectSelect(selectedProject, {
         skipLog: true,
         focusImageId: params.imageId
@@ -329,7 +339,7 @@ export const Workspace: React.FC = () => {
 
       // Update state
       setImages((prev) => prev.filter((img) => img.id !== image.id));
-      
+
       // If the deleted image was selected, clear selection
       if (selectedImage?.id === image.id) {
         setSelectedImage(null);
@@ -396,7 +406,7 @@ export const Workspace: React.FC = () => {
   }, []);
 
   const handleROIUpdate = useCallback((roiId: string, updates: Partial<ROI>) => {
-    setROIs(prev => prev.map(roi => 
+    setROIs(prev => prev.map(roi =>
       roi.id === roiId ? { ...roi, ...updates } : roi
     ));
     addLog('info', 'ROI updated');
@@ -411,33 +421,67 @@ export const Workspace: React.FC = () => {
   }, [selectedROI, addLog]);
 
   // Analysis
-  const handleAnalyzeROI = useCallback((roi: ROI, image: Image) => {
-    const analysisPrompt = `Please analyze ROI "${roi.name}" on ${image.name}: x=${roi.geometry.x|0}, y=${roi.geometry.y|0}, w=${roi.geometry.w|0}, h=${roi.geometry.h|0}.
-- Quantify CD68-positive cell density within the ROI.
-- Summarize spatial immune infiltration patterns.`;
+  const handleAnalyzeROI = useCallback(async (roi: ROI, image: Image) => {
+    if (!selectedProject) {
+      addLog('warning', 'No project selected');
+      return;
+    }
+
+    // Check if ROI is ready (completed processing)
+    if (roi.status === 'pending' || roi.status === 'processing' || roi.status === 'queued') {
+      addLog('info', `⏳ ROI "${roi.name}" is still processing...`);
+      addLog('info', `   The h5ad file will be updated automatically when ready`);
+      return;
+    }
+
+    if (roi.status === 'failed') {
+      addLog('error', `❌ ROI "${roi.name}" processing failed. ${roi.error || ''}`);
+      return;
+    }
+
+    // ROI is ready - show comprehensive info
+    const roiInfo = `ROI: ${roi.name} | Position: (${Math.round(roi.geometry.x)}, ${Math.round(roi.geometry.y)}) | Size: ${Math.round(roi.geometry.w)}×${Math.round(roi.geometry.h)}`;
     
-    void handleSendMessage(analysisPrompt);
-    addLog('info', `Started analysis for ROI: ${roi.name}`);
-  }, []);
+    addLog('success', `✓ ${roiInfo}`);
+    
+    if (roi.stats?.n_cells) {
+      addLog('info', `📊 ROI Statistics:`);
+      addLog('info', `   - Cells in ROI: ${roi.stats.n_cells.toLocaleString()}`);
+      if (roi.stats.n_cells_total) {
+        addLog('info', `   - Total cells: ${roi.stats.n_cells_total.toLocaleString()}`);
+        addLog('info', `   - Percentage: ${roi.stats.percentage?.toFixed(1)}%`);
+      }
+    }
+    
+    addLog('info', `📁 h5ad file has been updated with this ROI`);
+    addLog('info', `   Column added: obs['${roi.name}'] = True/False for each cell`);
+    addLog('info', ``);
+    addLog('info', `🔬 Next Steps - Use Multiagent Analysis (right panel):`);
+    addLog('info', `   1. Click "Start Analysis" button at the bottom of the chat`);
+    addLog('info', `   2. Provide the h5ad file path when prompted`);
+    addLog('info', `   3. Submit your analysis request, e.g.: "Analyze cell types in ${roi.name}"`);
+    addLog('info', `   4. The agent will filter cells where obs['${roi.name}'] == True`);
+    addLog('info', `   5. Get comprehensive report with visualizations`);
+  }, [selectedProject, addLog]);
 
   // Chat handling
   const handleSendMessage = useCallback(async (text: string) => {
-    const userMsg: ChatMessage = { 
-      id: crypto.randomUUID(), 
-      role: 'user', 
-      content: text, 
-      ts: Date.now() 
+    const userMsg: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: text,
+      ts: Date.now()
     };
     setMessages(prev => [...prev, userMsg]);
 
     setLoading(true);
     try {
       const reply = await sendChat(text);
-      const assistantMsg: ChatMessage = { 
-        id: crypto.randomUUID(), 
-        role: 'assistant', 
-        content: reply, 
-        ts: Date.now() 
+      const assistantMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: reply,
+        ts: Date.now()
       };
       setMessages(prev => [...prev, assistantMsg]);
 
@@ -540,17 +584,16 @@ export const Workspace: React.FC = () => {
           <LogResultsPanel
             logs={logs}
             results={results}
+            multiagentResult={multiagentResult}
           />
         </div>
       </div>
 
-      {/* Right Panel - Chat */}
+      {/* Right Panel - Multiagent Analysis */}
       <div className="w-80 flex-shrink-0 hidden xl:block">
-        <ChatPanel
-          messages={messages}
-          loading={loading}
-          onSend={handleSendMessage}
-          agentName="Slide"
+        <ChatMultiagent 
+          ref={chatMultiagentRef}
+          onResultUpdate={setMultiagentResult} 
         />
       </div>
     </div>

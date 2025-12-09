@@ -1,0 +1,36 @@
+{
+  "id": "0372e4bb-5bf2-4192-91c3-7502bedd81f4",
+  "userId": "user",
+  "metadata": {
+    "timestamp": 1765251974569
+  },
+  "createdAt": 1765251974588,
+  "updatedAt": 1765251977775,
+  "summary": "",
+  "summaryUpdatedAt": null,
+  "lastSummarizedMessageIndex": 0,
+  "messages": [
+    {
+      "id": "3da52889-4f1e-43f7-9864-ed1522fa93ca",
+      "role": "user",
+      "content": "analysis",
+      "name": null,
+      "metadata": {
+        "timestamp": 1765251974569
+      },
+      "createdAt": 1765251974588,
+      "tokenEstimate": 2
+    },
+    {
+      "id": "e2eff593-e486-419e-adb0-77b0bcace591",
+      "role": "assistant",
+      "content": "Could you please provide more details about the specific slide or Region of Interest (ROI) you would like to analyze? Additionally, let me know what type of biological feature analysis you are interested in (e.g., morphology, immunostaining, cellular density, tissue classification).",
+      "name": null,
+      "metadata": {
+        "functions_used": []
+      },
+      "createdAt": 1765251977775,
+      "tokenEstimate": 71
+    }
+  ]
+}
