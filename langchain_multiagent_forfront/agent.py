@@ -68,7 +68,6 @@ class AnalysisResult:
 DEFAULT_OPENAI_KEY_PATH = Path("~/.openai/api_key")
 OPENAI_KEY_ENV_VAR = "OPENAI_API_KEY"
 OPENAI_KEY_PATH_ENV_VAR = "OPENAI_API_KEY_FILE"
-# Direct API key - set this if you want to hardcode the key
 DIRECT_OPENAI_KEY = os.getenv("OPENAI_API_KEY", "")
 
 
