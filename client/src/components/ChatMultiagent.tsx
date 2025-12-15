@@ -21,6 +21,7 @@ import type { ChatMessage } from '../types';
 
 interface ChatMultiagentProps {
     onResultUpdate?: (result: JobResult | null) => void;
+    h5adPath?: string | null;  // Auto-populated h5ad file path
 }
 
 export interface ChatMultiagentRef {
@@ -32,7 +33,7 @@ function generateJobName(existingCount: number): string {
     return `Job ${existingCount + 1}`;
 }
 
-export const ChatMultiagent = forwardRef<ChatMultiagentRef, ChatMultiagentProps>(({ onResultUpdate }, ref) => {
+export const ChatMultiagent = forwardRef<ChatMultiagentRef, ChatMultiagentProps>(({ onResultUpdate, h5adPath }, ref) => {
     const [currentJobId, setCurrentJobId] = useState<string | null>(null);
     const [currentJobName, setCurrentJobName] = useState<string | null>(null);
     const [result, setResult] = useState<JobResult | null>(null);
@@ -43,7 +44,7 @@ export const ChatMultiagent = forwardRef<ChatMultiagentRef, ChatMultiagentProps>
     // Conversation state - simplified to match agent.py flow
     type ConversationState = 'idle' | 'awaiting_path' | 'awaiting_command' | 'running' | 'awaiting_response';
     const [conversationState, setConversationState] = useState<ConversationState>('idle');
-    const [pendingDataPath, setPendingDataPath] = useState('');
+    const [pendingDataPath, setPendingDataPath] = useState(h5adPath || '');
     const [pendingQuestion, setPendingQuestion] = useState<AgentMessage | null>(null);
 
     // Chat messages
@@ -57,6 +58,28 @@ export const ChatMultiagent = forwardRef<ChatMultiagentRef, ChatMultiagentProps>
     ]);
 
     const seenMessageIdsRef = useRef<Set<string>>(new Set());
+
+    // Update pendingDataPath when h5adPath prop changes
+    useEffect(() => {
+        if (h5adPath) {
+            setPendingDataPath(h5adPath);
+            
+            // Add a system message if this is the first time loading the path
+            if (chatMessages.length === 1) {
+                setChatMessages(prev => [...prev, {
+                    id: crypto.randomUUID(),
+                    role: 'assistant',
+                    content: `✓ Data file loaded and ready for analysis!\n\n` +
+                             `📁 **File:** ${h5adPath}\n\n` +
+                             `You can now:\n` +
+                             `• Type your analysis request directly (e.g., "Analyze cell types in ROI_1")\n` +
+                             `• Type \`start\` for guided analysis\n` +
+                             `• Type \`help\` for more commands`,
+                    ts: Date.now(),
+                }]);
+            }
+        }
+    }, [h5adPath]);
 
     // Session ID for chat memory - persistent across page reloads
     const [sessionId] = useState(() => {
@@ -172,7 +195,7 @@ export const ChatMultiagent = forwardRef<ChatMultiagentRef, ChatMultiagentProps>
                 // Check for pending questions in interactive mode (separate from regular messages)
                 if (pending && pending.requires_response && !pending.response) {
                     console.log('[ChatMultiagent] Found unanswered pending question:', pending);
-                    // 只在还没显示这个问题时才显示
+                    // Only show if this question has not been displayed yet
                     if (!pendingQuestion || pendingQuestion.message_id !== pending.message_id) {
                         console.log('[ChatMultiagent] Showing new pending question');
                         setPendingQuestion(pending);
@@ -441,11 +464,11 @@ export const ChatMultiagent = forwardRef<ChatMultiagentRef, ChatMultiagentProps>
         }
 
         if (conversationState === 'awaiting_response') {
-            // 用户正在回答 Agent 的问题
+            // User is answering Agent question
             if (pendingQuestion) {
                 try {
                     await submitResponse(currentJobId!, pendingQuestion.message_id!, trimmed);
-                    // 不显示额外确认消息，让 Agent 自己显示
+                    // Do not show extra confirmation, let Agent display its own response
                     setPendingQuestion(null);
                     setConversationState('running');
                     if (!loading) {
@@ -460,10 +483,22 @@ export const ChatMultiagent = forwardRef<ChatMultiagentRef, ChatMultiagentProps>
 
         // Parse commands in idle/running state
         if (lowerMessage === 'start' || lowerMessage === 'begin' || lowerMessage === 'new analysis') {
-            setConversationState('awaiting_path');
-            addChatMessage('assistant',
-                'Please provide the full path to your data file (.h5 format), or type "example" to use demo dataset:'
-            );
+            // If h5ad path is already available, skip to command
+            if (pendingDataPath) {
+                setConversationState('awaiting_command');
+                addChatMessage('assistant',
+                    `✓ Data file loaded: ${pendingDataPath}\n\nWhat analysis would you like me to perform?\n\n` +
+                    `*Examples:*\n` +
+                    `• Analyze cell types in ROI_1\n` +
+                    `• Perform clustering analysis\n` +
+                    `• Find marker genes`
+                );
+            } else {
+                setConversationState('awaiting_path');
+                addChatMessage('assistant',
+                    'Please provide the full path to your data file (.h5 format), or type "example" to use demo dataset:'
+                );
+            }
         } else if (lowerMessage.startsWith('result ')) {
             const jobId = trimmed.substring(7).trim();
             await handleGetResult(jobId);
@@ -515,25 +550,34 @@ export const ChatMultiagent = forwardRef<ChatMultiagentRef, ChatMultiagentProps>
             setPendingDataPath('');
             addChatMessage('assistant', 'Cancelled. Type "start" to begin a new analysis.');
         } else {
-            // Unknown command - use GPT for general conversation
-            try {
-                setLoading(true);
-                const { simpleChat } = await import('../lib/api');
-                
-                // Include current job info if available
-                const jobInfo = currentJobId && currentJobName 
-                    ? { jobId: currentJobId, jobName: currentJobName }
-                    : undefined;
-                
-                const response = await simpleChat(trimmed, sessionId, jobInfo);
-                addChatMessage('assistant', response);
-            } catch (error: any) {
-                console.error('Chat error:', error);
-                addChatMessage('assistant',
-                    'I didn\'t understand that. Type "help" for available commands or "start" to begin an analysis.'
-                );
-            } finally {
-                setLoading(false);
+            // If h5ad path is available and user types a direct request, treat it as analysis command
+            if (pendingDataPath && conversationState === 'idle' && 
+                (lowerMessage.includes('analyze') || lowerMessage.includes('cluster') || 
+                 lowerMessage.includes('roi') || lowerMessage.includes('cell type') || 
+                 lowerMessage.includes('marker') || lowerMessage.includes('gene'))) {
+                // Direct analysis request - start immediately
+                await startAnalysis(pendingDataPath, trimmed);
+            } else {
+                // Unknown command - use GPT for general conversation
+                try {
+                    setLoading(true);
+                    const { simpleChat } = await import('../lib/api');
+                    
+                    // Include current job info if available
+                    const jobInfo = currentJobId && currentJobName 
+                        ? { jobId: currentJobId, jobName: currentJobName }
+                        : undefined;
+                    
+                    const response = await simpleChat(trimmed, sessionId, jobInfo);
+                    addChatMessage('assistant', response);
+                } catch (error: any) {
+                    console.error('Chat error:', error);
+                    addChatMessage('assistant',
+                        'I didn\'t understand that. Type "help" for available commands or "start" to begin an analysis.'
+                    );
+                } finally {
+                    setLoading(false);
+                }
             }
         }
     };
@@ -782,3 +826,5 @@ export const ChatMultiagent = forwardRef<ChatMultiagentRef, ChatMultiagentProps>
         </div>
     );
 });
+
+ChatMultiagent.displayName = 'ChatMultiagent';

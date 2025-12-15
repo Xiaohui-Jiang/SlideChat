@@ -409,6 +409,26 @@ export async function getSupportedFormats() {
   );
 }
 
+// Get h5ad file path for multiagent analysis
+export async function getH5adPath(projectId: string, imageId: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${API}/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(imageId)}/h5ad-path`, {
+      method: 'GET'
+    });
+
+    if (!res.ok) {
+      console.warn('Failed to get h5ad path:', res.status);
+      return null;
+    }
+
+    const data = await res.json();
+    return data.h5adPath || null;
+  } catch (error) {
+    console.error('Error fetching h5ad path:', error);
+    return null;
+  }
+}
+
 // Simple chat API for general conversation
 export async function simpleChat(
   message: string, 

@@ -1,7 +1,7 @@
 /**
  * Multiagent Analysis API Client
  * 
- * 提供与 Python Multiagent 服务交互的函数
+ * Provides functions for interacting with the Python Multiagent service
  */
 
 export interface AnalysisRequest {
@@ -56,7 +56,7 @@ export interface JobMessages {
 const API_BASE = '/api/multiagent';
 
 /**
- * 提交分析任务
+ * Submit analysis job
  */
 export async function submitAnalysis(request: AnalysisRequest): Promise<{ job_id: string }> {
     console.log('[multiagent-api] submitAnalysis called with:', request);
@@ -82,7 +82,7 @@ export async function submitAnalysis(request: AnalysisRequest): Promise<{ job_id
 }
 
 /**
- * 检查任务状态
+ * Check job status
  */
 export async function checkStatus(jobId: string): Promise<JobStatus> {
     const response = await fetch(`${API_BASE}/status/${jobId}`);
@@ -96,7 +96,7 @@ export async function checkStatus(jobId: string): Promise<JobStatus> {
 }
 
 /**
- * 获取任务结果
+ * Get job result
  */
 export async function getResult(jobId: string): Promise<JobResult> {
     const response = await fetch(`${API_BASE}/result/${jobId}`);
@@ -110,7 +110,7 @@ export async function getResult(jobId: string): Promise<JobResult> {
 }
 
 /**
- * 获取所有任务列表
+ * Get all jobs list
  */
 export async function getAllJobs(): Promise<JobStatus[]> {
     const response = await fetch(`${API_BASE}/jobs`);

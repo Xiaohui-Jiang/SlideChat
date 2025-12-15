@@ -745,16 +745,18 @@ export default function OpenSeadragonSlideViewer({
       }
 
       // Convert viewport coordinates to image pixel coordinates
-      // OpenSeadragon viewport coordinates are normalized (image width = 1.0)
-      // Use source dimensions for accurate pixel coordinates
+      // OpenSeadragon uses a UNIFORM coordinate system where image width = 1.0
+      // Both X and Y axes use the same scale (imageWidth) to maintain aspect ratio
+      // For a 10000×5000 image: viewport (0.5, 0.25) = pixel (5000, 2500)
+      // Note: Y also uses imageWidth (not imageHeight) - this is correct!
   const actualImageWidth = imageWidth || imageSize.x;
   const actualImageHeight = imageHeight || imageSize.y;
       
       const rawGeometry = {
         x: rect.x * actualImageWidth,
-        y: rect.y * actualImageWidth,
+        y: rect.y * actualImageWidth,        // Uses imageWidth for uniform scale ✓
         w: rect.width * actualImageWidth,
-        h: rect.height * actualImageWidth
+        h: rect.height * actualImageWidth   // Uses imageWidth for uniform scale ✓
       };
       
       // Clamp to image boundaries - ensure ROI stays within image bounds
@@ -893,17 +895,18 @@ export default function OpenSeadragonSlideViewer({
     // This is because pointer-events: none allows pan/zoom to work through the overlay
 
     // Convert image pixel coordinates to viewport coordinates
-    // In OpenSeadragon, viewport coords are normalized where image width = 1.0
-    // Both X and Y use the same scale (based on image width)
+    // OpenSeadragon uses UNIFORM scaling: both X and Y divide by imageWidth
+    // This is the inverse of the forward conversion in createROIFromRect
+    // For a 10000×5000 image: pixel (5000, 2500) = viewport (0.5, 0.25)
   const module = osdModuleRef.current;
   const RectCtor = module?.Rect;
   const placement = module?.Placement?.TOP_LEFT;
     const viewportRect = RectCtor
       ? new RectCtor(
           roi.geometry.x / imageWidth,
-          roi.geometry.y / imageWidth,
+          roi.geometry.y / imageWidth,        // Uses imageWidth (not Height) ✓
           roi.geometry.w / imageWidth,
-          roi.geometry.h / imageWidth
+          roi.geometry.h / imageWidth         // Uses imageWidth (not Height) ✓
         )
       : {
           x: roi.geometry.x / imageWidth,

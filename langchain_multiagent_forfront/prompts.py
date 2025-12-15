@@ -19,6 +19,37 @@ PARAMETER_PROMPTS: Dict[str, Dict[str, str]] = {
         "method": "Embedding method (umap/tsne)",
         "color_by": "Observation column used for embedding colouring",
     },
+    "batch_correction": {
+        "adata_id": "Select the AnnData file for batch correction",
+        "batch_key": "Observation column containing batch labels",
+        "method": "Batch correction method (combat)",
+        "compute_embedding": "Recompute PCA/neighbor graph/UMAP after correction? (y/n)",
+    },
+    "spatial_gene_plot": {
+        "adata_id": "Select the AnnData file for spatial gene plotting",
+        "genes": "Enter one or more gene symbols (comma-separated) to visualize",
+        "obsm_key": "obsm key containing x,y coordinates (default: spatial)",
+        "point_size": "Point size for scatter plot",
+    },
+    "umap_gene_plot": {
+        "adata_id": "Select the AnnData file for UMAP gene plotting",
+        "genes": "Enter one or more gene symbols (comma-separated) to visualize",
+        "obsm_key": "obsm key containing UMAP coordinates (default: X_umap)",
+        "point_size": "Point size for scatter plot",
+    },
+    "pseudotime": {
+        "adata_id": "Select the AnnData file for pseudotime analysis",
+        "root_cell": "Root cell identifier (obs name) or leave blank",
+        "root_label": "Root cluster/label in observation column (optional)",
+        "label_key": "Observation column containing labels for root selection (default: leiden)",
+        "neighbors_key": "Neighbors key to use (default: None -> AnnData.uns['neighbors'])",
+    },
+    "cell_communication": {
+        "adata_id": "Select the AnnData file for cell-cell communication",
+        "group_key": "Observation column defining sender/receiver groups (e.g., leiden)",
+        "n_top_pairs": "Number of top ligand-receptor pairs to report",
+        "min_expr": "Minimum average expression to keep a ligand/receptor (default: 0.05)",
+    },
     "de": {
         "adata_id": "Select the AnnData file for differential expression",
         "group_key": "Observation column used for grouping",

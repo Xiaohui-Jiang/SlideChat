@@ -51,18 +51,9 @@ tmp_celltyping_api/
 server/tmp/
 server/uploads/
 
-# Generated project artifacts (tiles, processed data)
-server/data/projects/*/tiles/
-server/data/projects/*/processed/*.h5ad
-server/data/projects/*/processed/*.dzi
-
-# But keep demo project metadata and source files
-!server/data/projects/229092fc-61dc-45b7-b8d2-e8da30a918eb/project.json
-!server/data/projects/229092fc-61dc-45b7-b8d2-e8da30a918eb/files/
-!server/data/projects/229092fc-61dc-45b7-b8d2-e8da30a918eb/rois/
-
-# Job queue and runtime state
-server/data/jobs/
+# Generated project artifacts (all user data and runtime files)
+server/data/
+server/server_logs/
 
 # Python cache
 server/lib/__pycache__/

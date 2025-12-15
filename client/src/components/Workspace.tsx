@@ -24,7 +24,8 @@ import {
   fetchProjectImage,
   createImageROI,
   deleteProjectOnServer,
-  sendChat
+  sendChat,
+  getH5adPath
 } from '../lib/api';
 
 export const Workspace: React.FC = () => {
@@ -53,6 +54,7 @@ export const Workspace: React.FC = () => {
   const [results, setResults] = useState<AnalysisResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [multiagentResult, setMultiagentResult] = useState<any>(null);
+  const [h5adPath, setH5adPath] = useState<string | null>(null);
   
   // Ref to communicate with ChatMultiagent
   const chatMultiagentRef = useRef<ChatMultiagentRef | null>(null);
@@ -200,6 +202,35 @@ export const Workspace: React.FC = () => {
   useEffect(() => {
     selectedProjectRef.current = selectedProject;
   }, [selectedProject]);
+
+  // Fetch h5ad path when image changes
+  useEffect(() => {
+    const fetchH5adPath = async () => {
+      if (!selectedProject?.id || !selectedImage?.id) {
+        setH5adPath(null);
+        return;
+      }
+
+      // Only fetch if the dataset is processed
+      if (!selectedImage?.status?.processed) {
+        setH5adPath(null);
+        return;
+      }
+
+      try {
+        const path = await getH5adPath(selectedProject.id, selectedImage.id);
+        setH5adPath(path);
+        if (path) {
+          addLog('info', `📁 h5ad file ready for analysis: ${path}`);
+        }
+      } catch (error) {
+        console.error('Failed to fetch h5ad path:', error);
+        setH5adPath(null);
+      }
+    };
+
+    fetchH5adPath();
+  }, [selectedProject, selectedImage, addLog]);
 
   useEffect(() => {
     if (
@@ -457,8 +488,8 @@ export const Workspace: React.FC = () => {
     addLog('info', `   Column added: obs['${roi.name}'] = True/False for each cell`);
     addLog('info', ``);
     addLog('info', `🔬 Next Steps - Use Multiagent Analysis (right panel):`);
-    addLog('info', `   1. Click "Start Analysis" button at the bottom of the chat`);
-    addLog('info', `   2. Provide the h5ad file path when prompted`);
+    addLog('info', `   1. The h5ad file path is automatically loaded`);
+    addLog('info', `   2. Click "Start Analysis" button in the chat`);
     addLog('info', `   3. Submit your analysis request, e.g.: "Analyze cell types in ${roi.name}"`);
     addLog('info', `   4. The agent will filter cells where obs['${roi.name}'] == True`);
     addLog('info', `   5. Get comprehensive report with visualizations`);
@@ -593,7 +624,8 @@ export const Workspace: React.FC = () => {
       <div className="w-80 flex-shrink-0 hidden xl:block">
         <ChatMultiagent 
           ref={chatMultiagentRef}
-          onResultUpdate={setMultiagentResult} 
+          onResultUpdate={setMultiagentResult}
+          h5adPath={h5adPath}
         />
       </div>
     </div>

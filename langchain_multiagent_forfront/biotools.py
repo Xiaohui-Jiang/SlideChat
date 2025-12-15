@@ -14,9 +14,6 @@ from langchain_core.runnables import Runnable, RunnableConfig
 from pydantic.v1 import BaseModel, Field, create_model
 from langchain_openai import ChatOpenAI
 
-# Configure matplotlib to use non-interactive backend
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 import scanpy as sc
@@ -32,46 +29,6 @@ LOG_FORMAT = (
 )
 _ENV_LOG_LEVEL = os.getenv("BIOAGENT_LOG_LEVEL", "WARNING").upper()
 LOG_LEVEL = getattr(logging, _ENV_LOG_LEVEL, logging.WARNING)
-
-DEFAULT_FALLBACK_CELL_TYPES = [
-    "CD4+ T cells",
-    "CD8+ T cells",
-    "Regulatory T cells",
-    "B cells",
-    "Plasma cells",
-    "NK cells",
-    "Monocytes/macrophages",
-    "Dendritic cells",
-    "Endothelial cells",
-    "Fibroblasts / CAFs",
-    "Pericytes",
-    "Mast cells",
-]
-
-TISSUE_SPECIFIC_FALLBACKS = {
-    "lung": [
-        "LUAD epithelial malignant",
-        "Squamous malignant",
-        "EMT-like carcinoma",
-        "Alveolar type I",
-        "Alveolar type II",
-        "Club cells",
-        "Goblet cells",
-        "CD4+ T cells",
-        "CD8+ T cells",
-        "Regulatory T cells",
-        "B cells",
-        "Plasma cells",
-        "NK cells",
-        "Alveolar macrophages",
-        "Monocyte-derived macrophages",
-        "Dendritic cells",
-        "Endothelial cells",
-        "Fibroblasts / CAFs",
-        "Pericytes",
-        "Mast cells",
-    ],
-}
 
 root_logger = logging.getLogger()
 if not root_logger.handlers:
@@ -96,8 +53,8 @@ warnings.filterwarnings(
     category=FutureWarning,
 )
 
-from prompts import LLM_PROMPTS, LLM_SYSTEM_MESSAGES
-from report_utils import save_figure
+from .prompts import LLM_PROMPTS, LLM_SYSTEM_MESSAGES
+from .report_utils import save_figure
 
 
 def _build_output_path(
@@ -255,6 +212,697 @@ class PreprocessPipelineTool(BioToolBase):
     description = "Run QC filtering and embedding pipeline"
     input_schema = PreprocessPipelineInput
 
+# ---------------------------------------------------------------------------
+# Batch Correction Tool
+# ---------------------------------------------------------------------------
+
+
+class BatchCorrectionInput(BaseModel):
+    """Input schema for batch correction."""
+
+    adata_id: str = Field(description="Data object handle")
+    batch_key: str = Field(description="Observation column containing batch labels")
+    method: str = Field(
+        default="combat",
+        description="Batch correction method (currently supports 'combat')",
+    )
+    compute_embedding: bool = Field(
+        default=True,
+        description="Recompute PCA/neighbors/UMAP after correction",
+    )
+    n_pcs: int = Field(
+        default=30,
+        description="Number of principal components to compute when embedding",
+        gt=1,
+    )
+    output_dir: Optional[str] = Field(
+        default=None,
+        description="Directory for generated artifacts and corrected AnnData",
+    )
+
+
+class BatchCorrectionTool(BioToolBase):
+    name = "batch_correction"
+    description = "Correct batch effects and optionally recompute embeddings"
+    input_schema = BatchCorrectionInput
+
+# ---------------------------------------------------------------------------
+# Spatial Gene Plot Tool
+# ---------------------------------------------------------------------------
+
+
+class SpatialGenePlotInput(BaseModel):
+    """Input schema for spatial gene expression plotting."""
+
+    adata_id: str = Field(description="Data object handle")
+    genes: Union[str, List[str]] = Field(
+        description="Gene symbols to plot (comma-separated string or list)"
+    )
+    obsm_key: Optional[str] = Field(
+        default="spatial",
+        description="obsm key containing x,y coordinates",
+    )
+    point_size: Optional[float] = Field(
+        default=5.0,
+        description="Scatter point size",
+        gt=0,
+    )
+    output_dir: Optional[str] = Field(
+        default=None,
+        description="Directory for generated plots",
+    )
+
+
+class SpatialGenePlotTool(BioToolBase):
+    name = "spatial_gene_plot"
+    description = "Plot selected gene expression on spatial coordinates"
+    input_schema = SpatialGenePlotInput
+
+class UMAPGenePlotInput(BaseModel):
+    """Input schema for UMAP gene expression plotting."""
+
+    adata_id: str = Field(description="Data object handle")
+    genes: Union[str, List[str]] = Field(
+        description="Gene symbols to plot (comma-separated string or list)"
+    )
+    obsm_key: Optional[str] = Field(
+        default="X_umap",
+        description="obsm key containing UMAP coordinates",
+    )
+    point_size: Optional[float] = Field(
+        default=5.0,
+        description="Scatter point size",
+        gt=0,
+    )
+    output_dir: Optional[str] = Field(
+        default=None,
+        description="Directory for generated plots",
+    )
+
+
+class UMAPGenePlotTool(BioToolBase):
+    name = "umap_gene_plot"
+    description = "Plot selected gene expression on UMAP coordinates"
+    input_schema = UMAPGenePlotInput
+
+class PseudotimeInput(BaseModel):
+    """Input schema for diffusion pseudotime analysis."""
+
+    adata_id: str = Field(description="Data object handle")
+    root_cell: Optional[str] = Field(
+        default=None,
+        description="Root cell identifier (obs name). Leave blank to auto-pick.",
+    )
+    root_label: Optional[str] = Field(
+        default=None,
+        description="Root label value in the label_key column.",
+    )
+    label_key: Optional[str] = Field(
+        default="leiden",
+        description="Observation column used to pick root_label.",
+    )
+    neighbors_key: Optional[str] = Field(
+        default=None,
+        description="Neighbors key to use (defaults to AnnData.uns['neighbors']).",
+    )
+    output_dir: Optional[str] = Field(
+        default=None,
+        description="Directory for generated artifacts",
+    )
+
+
+class PseudotimeTool(BioToolBase):
+    name = "pseudotime"
+    description = "Compute diffusion pseudotime and visualize on UMAP"
+    input_schema = PseudotimeInput
+
+class CellCommunicationInput(BaseModel):
+    """Input schema for cell-cell communication inference."""
+
+    adata_id: str = Field(description="Data object handle")
+    group_key: str = Field(
+        default="leiden",
+        description="Observation column defining sender/receiver groups",
+    )
+    n_top_pairs: int = Field(
+        default=20,
+        gt=0,
+        description="Number of top ligand-receptor pairs to report",
+    )
+    min_expr: Optional[float] = Field(
+        default=0.05,
+        description="Minimum mean expression to keep ligand/receptor",
+        ge=0.0,
+    )
+    output_dir: Optional[str] = Field(
+        default=None,
+        description="Directory for generated tables/plots",
+    )
+
+
+class CellCommunicationTool(BioToolBase):
+    name = "cell_communication"
+    description = "Infer ligand-receptor interactions across clusters"
+    input_schema = CellCommunicationInput
+
+
+def _run_batch_correction(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Perform batch correction using Scanpy's Combat and optional embedding."""
+    try:
+        input_path = Path(params["adata_id"])
+        file_path = str(input_path)
+        if file_path.endswith(".h5ad"):
+            adata = sc.read_h5ad(file_path)
+        elif file_path.endswith(".h5"):
+            adata = sc.read_10x_h5(file_path)
+        else:
+            raise ValueError(f"Unsupported file format: {file_path}")
+
+        batch_key = params["batch_key"]
+        if batch_key not in adata.obs.columns:
+            raise ValueError(f"Column '{batch_key}' not found in adata.obs")
+
+        method = (params.get("method") or "combat").lower()
+        if method != "combat":
+            raise ValueError(f"Unsupported batch correction method: {method}")
+
+        adata = adata.copy()
+        if not adata.var_names.is_unique:
+            adata.var_names_make_unique()
+
+        sc.pp.combat(adata, key=batch_key)
+
+        compute_embedding = bool(params.get("compute_embedding", True))
+        embedding_plot = None
+        embedding_coords = None
+
+        if compute_embedding:
+            n_pcs = int(params.get("n_pcs") or 30)
+            n_pcs = max(2, min(n_pcs, max(adata.n_vars - 1, 2)))
+            sc.pp.pca(adata, n_comps=n_pcs)
+            sc.pp.neighbors(adata)
+            sc.tl.umap(adata)
+
+            embedding_coords = _build_output_path(
+                input_path,
+                self.name,
+                "umap_coords",
+                ".csv",
+                output_dir=params.get("output_dir"),
+            )
+            pd.DataFrame(adata.obsm["X_umap"], columns=["umap1", "umap2"]).to_csv(
+                embedding_coords, index=False
+            )
+
+            embedding_plot = _build_output_path(
+                input_path,
+                self.name,
+                "umap_batches",
+                ".png",
+                output_dir=params.get("output_dir"),
+            )
+            fig, ax = plt.subplots(figsize=(6, 5))
+            batches = adata.obs[batch_key].astype(str)
+            unique_batches = sorted(batches.unique())
+            cmap = plt.colormaps.get_cmap("tab20")
+            colors = cmap(np.linspace(0, 1, max(len(unique_batches), 1)))
+            for idx, label in enumerate(unique_batches):
+                mask = batches == label
+                coords = adata.obsm["X_umap"]
+                ax.scatter(
+                    coords[mask, 0],
+                    coords[mask, 1],
+                    s=4,
+                    color=colors[idx],
+                    edgecolors="none",
+                    alpha=0.9,
+                    label=str(label),
+                )
+            ax.set_xlabel("UMAP 1")
+            ax.set_ylabel("UMAP 2")
+            ax.set_title("UMAP coloured by batch")
+            if unique_batches:
+                ax.legend(
+                    loc="center left",
+                    bbox_to_anchor=(1.02, 0.5),
+                    frameon=False,
+                    fontsize=8,
+                )
+                fig.subplots_adjust(right=0.78)
+            save_figure(fig, embedding_plot, tight_layout=False)
+
+        batches = adata.obs[batch_key].astype(str)
+        batch_counts = batches.value_counts().sort_index().to_dict()
+        output_file = _persist_adata(adata, input_path, output_dir=params.get("output_dir"))
+
+        summary_text = (
+            f"Batch correction ({method}) applied on column '{batch_key}' across {len(batch_counts)} batches. "
+            f"Corrected AnnData saved to {output_file}."
+        )
+        if compute_embedding:
+            summary_text += " Recomputed PCA/neighbors/UMAP and exported coordinates and batch-coloured plot."
+
+        result: Dict[str, Any] = {
+            "output_data": output_file,
+            "batch_key": batch_key,
+            "batches": {str(k): int(v) for k, v in batch_counts.items()},
+            "method": method,
+            "summary_text": summary_text,
+        }
+        if embedding_plot:
+            result["plots"] = {"umap_batches": embedding_plot}
+        if embedding_coords:
+            result["embedding_coords"] = embedding_coords
+
+        return result
+
+    except Exception as e:
+        raise RuntimeError(f"Batch correction failed: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Spatial Gene Plot Tool implementation
+# ---------------------------------------------------------------------------
+
+
+def _run_spatial_gene_plot(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Plot selected genes on 2D spatial coordinates."""
+    try:
+        input_path = Path(params["adata_id"])
+        file_path = str(input_path)
+        if file_path.endswith(".h5ad"):
+            adata = sc.read_h5ad(file_path)
+        elif file_path.endswith(".h5"):
+            adata = sc.read_10x_h5(file_path)
+        else:
+            raise ValueError(f"Unsupported file format: {file_path}")
+
+        obsm_key = (params.get("obsm_key") or "spatial").strip()
+        if obsm_key not in adata.obsm:
+            raise ValueError(f"obsm key '{obsm_key}' not found in AnnData")
+        coords = adata.obsm[obsm_key]
+        if coords is None or coords.shape[1] < 2:
+            raise ValueError(f"obsm['{obsm_key}'] must have at least two columns for x,y coordinates")
+
+        raw_genes = params["genes"]
+        if isinstance(raw_genes, str):
+            gene_list = [g.strip() for g in raw_genes.replace(";", ",").split(",") if g.strip()]
+        else:
+            gene_list = [str(g).strip() for g in raw_genes if str(g).strip()]
+        if not gene_list:
+            raise ValueError("No gene symbols provided for plotting.")
+
+        point_size = float(params.get("point_size") or 5.0)
+        output_dir = params.get("output_dir")
+
+        available = set(map(str, adata.var_names))
+        valid_genes = [g for g in gene_list if g in available]
+        missing = [g for g in gene_list if g not in available]
+        if not valid_genes:
+            raise ValueError("None of the requested genes are present in the dataset.")
+
+        plots: Dict[str, str] = {}
+        for gene in valid_genes:
+            try:
+                expr = adata[:, gene].X
+                if sparse.issparse(expr):
+                    expr = expr.toarray()
+                expr = np.asarray(expr).ravel()
+            except Exception:
+                logger.debug("Failed to extract expression for gene %s", gene)
+                continue
+
+            plot_path = _build_output_path(
+                input_path,
+                self.name,
+                f"{gene}_spatial",
+                ".png",
+                output_dir=output_dir,
+            )
+            fig, ax = plt.subplots(figsize=(5.5, 5))
+            sc_plt = ax.scatter(
+                coords[:, 0],
+                coords[:, 1],
+                c=expr,
+                cmap="viridis",
+                s=point_size,
+                edgecolors="none",
+                alpha=0.9,
+            )
+            ax.set_title(f"{gene} expression")
+            ax.set_xlabel("x")
+            ax.set_ylabel("y")
+            cbar = fig.colorbar(sc_plt, ax=ax, fraction=0.046, pad=0.04)
+            cbar.set_label("Expression")
+            save_figure(fig, plot_path, tight_layout=False)
+            plots[gene] = plot_path
+
+        summary_parts = [
+            f"Plotted {len(plots)}/{len(gene_list)} genes on obsm '{obsm_key}'."
+        ]
+        if missing:
+            summary_parts.append(f"Missing genes: {', '.join(missing)}")
+        summary_text = " ".join(summary_parts)
+
+        result: Dict[str, Any] = {
+            "plots": plots,
+            "genes_plotted": valid_genes,
+            "missing_genes": missing,
+            "obsm_key": obsm_key,
+            "summary_text": summary_text,
+        }
+        return result
+
+    except Exception as e:
+        raise RuntimeError(f"Spatial gene plotting failed: {str(e)}")
+
+
+def _run_umap_gene_plot(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Plot selected genes on UMAP coordinates."""
+    try:
+        input_path = Path(params["adata_id"])
+        file_path = str(input_path)
+        if file_path.endswith(".h5ad"):
+            adata = sc.read_h5ad(file_path)
+        elif file_path.endswith(".h5"):
+            adata = sc.read_10x_h5(file_path)
+        else:
+            raise ValueError(f"Unsupported file format: {file_path}")
+
+        obsm_key = (params.get("obsm_key") or "X_umap").strip()
+        if obsm_key not in adata.obsm:
+            raise ValueError(f"obsm key '{obsm_key}' not found in AnnData")
+        coords = adata.obsm[obsm_key]
+        if coords is None or coords.shape[1] < 2:
+            raise ValueError(f"obsm['{obsm_key}'] must have at least two columns for x,y coordinates")
+
+        raw_genes = params["genes"]
+        if isinstance(raw_genes, str):
+            gene_list = [g.strip() for g in raw_genes.replace(";", ",").split(",") if g.strip()]
+        else:
+            gene_list = [str(g).strip() for g in raw_genes if str(g).strip()]
+        if not gene_list:
+            raise ValueError("No gene symbols provided for plotting.")
+
+        point_size = float(params.get("point_size") or 5.0)
+        output_dir = params.get("output_dir")
+
+        available = set(map(str, adata.var_names))
+        valid_genes = [g for g in gene_list if g in available]
+        missing = [g for g in gene_list if g not in available]
+        if not valid_genes:
+            raise ValueError("None of the requested genes are present in the dataset.")
+
+        plots: Dict[str, str] = {}
+        for gene in valid_genes:
+            try:
+                expr = adata[:, gene].X
+                if sparse.issparse(expr):
+                    expr = expr.toarray()
+                expr = np.asarray(expr).ravel()
+            except Exception:
+                logger.debug("Failed to extract expression for gene %s", gene)
+                continue
+
+            plot_path = _build_output_path(
+                input_path,
+                self.name,
+                f"{gene}_umap",
+                ".png",
+                output_dir=output_dir,
+            )
+            fig, ax = plt.subplots(figsize=(5.5, 5))
+            sc_plt = ax.scatter(
+                coords[:, 0],
+                coords[:, 1],
+                c=expr,
+                cmap="viridis",
+                s=point_size,
+                edgecolors="none",
+                alpha=0.9,
+            )
+            ax.set_title(f"{gene} expression on UMAP")
+            ax.set_xlabel("UMAP 1")
+            ax.set_ylabel("UMAP 2")
+            cbar = fig.colorbar(sc_plt, ax=ax, fraction=0.046, pad=0.04)
+            cbar.set_label("Expression")
+            save_figure(fig, plot_path, tight_layout=False)
+            plots[gene] = plot_path
+
+        summary_parts = [
+            f"Plotted {len(plots)}/{len(gene_list)} genes on obsm '{obsm_key}' (UMAP)."
+        ]
+        if missing:
+            summary_parts.append(f"Missing genes: {', '.join(missing)}")
+        summary_text = " ".join(summary_parts)
+
+        result: Dict[str, Any] = {
+            "plots": plots,
+            "genes_plotted": valid_genes,
+            "missing_genes": missing,
+            "obsm_key": obsm_key,
+            "summary_text": summary_text,
+        }
+        return result
+
+    except Exception as e:
+        raise RuntimeError(f"UMAP gene plotting failed: {str(e)}")
+
+
+def _run_pseudotime(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute diffusion pseudotime and plot on UMAP."""
+    try:
+        input_path = Path(params["adata_id"])
+        file_path = str(input_path)
+        if file_path.endswith(".h5ad"):
+            adata = sc.read_h5ad(file_path)
+        elif file_path.endswith(".h5"):
+            adata = sc.read_10x_h5(file_path)
+        else:
+            raise ValueError(f"Unsupported file format: {file_path}")
+
+        adata = adata.copy()
+        if not adata.var_names.is_unique:
+            adata.var_names_make_unique()
+
+        neighbors_key = params.get("neighbors_key")
+        if neighbors_key:
+            if neighbors_key + "_connectivities" not in adata.obsp:
+                raise ValueError(f"Neighbors key '{neighbors_key}' not found in adata.obsp")
+            adata.uns["neighbors"] = {
+                "connectivities": adata.obsp[f"{neighbors_key}_connectivities"],
+                "distances": adata.obsp.get(f"{neighbors_key}_distances"),
+                "params": {"key": neighbors_key},
+            }
+
+        # Ensure neighbors exist
+        if "neighbors" not in adata.uns:
+            sc.pp.neighbors(adata)
+
+        # Root selection
+        root_cell = params.get("root_cell")
+        root_label = params.get("root_label")
+        label_key = params.get("label_key") or "leiden"
+        root_index: Optional[int] = None
+
+        if root_cell and root_cell in adata.obs_names:
+            root_index = int(np.where(adata.obs_names == root_cell)[0][0])
+        elif root_label and label_key in adata.obs.columns:
+            root_indices = np.where(adata.obs[label_key].astype(str) == str(root_label))[0]
+            if root_indices.size > 0:
+                root_index = int(root_indices[0])
+
+        sc.tl.dpt(adata, n_dcs=10, neighbors_key=neighbors_key, root=root_index)
+
+        if "X_umap" not in adata.obsm:
+            # Try to generate a UMAP for visualization if missing
+            sc.tl.umap(adata)
+
+        pseudotime_vals = adata.obs.get("dpt_pseudotime")
+        if pseudotime_vals is None:
+            raise RuntimeError("Pseudotime values were not computed.")
+
+        output_dir = params.get("output_dir")
+        output_file = _persist_adata(adata, input_path, output_dir=output_dir)
+
+        umap_coords = adata.obsm.get("X_umap")
+        plot_path = None
+        coords_file = None
+        if umap_coords is not None and umap_coords.shape[1] >= 2:
+            coords_file = _build_output_path(
+                input_path,
+                self.name,
+                "umap_coords",
+                ".csv",
+                output_dir=output_dir,
+            )
+            pd.DataFrame(umap_coords, columns=["umap1", "umap2"]).assign(
+                pseudotime=pseudotime_vals.values if hasattr(pseudotime_vals, "values") else pseudotime_vals
+            ).to_csv(coords_file, index=False)
+
+            plot_path = _build_output_path(
+                input_path,
+                self.name,
+                "pseudotime_umap",
+                ".png",
+                output_dir=output_dir,
+            )
+            fig, ax = plt.subplots(figsize=(6, 5))
+            sc_plt = ax.scatter(
+                umap_coords[:, 0],
+                umap_coords[:, 1],
+                c=pseudotime_vals,
+                cmap="plasma",
+                s=5,
+                edgecolors="none",
+                alpha=0.9,
+            )
+            ax.set_title("Diffusion pseudotime")
+            ax.set_xlabel("UMAP 1")
+            ax.set_ylabel("UMAP 2")
+            cbar = fig.colorbar(sc_plt, ax=ax, fraction=0.046, pad=0.04)
+            cbar.set_label("Pseudotime")
+            save_figure(fig, plot_path, tight_layout=False)
+
+        summary_parts = [
+            "Computed diffusion pseudotime.",
+        ]
+        if root_cell:
+            summary_parts.append(f"Root cell: {root_cell}")
+        elif root_label:
+            summary_parts.append(f"Root label '{root_label}' in column '{label_key}'")
+        else:
+            summary_parts.append("Root auto-selected by Scanpy.")
+        summary_text = " ".join(summary_parts) + f" Outputs saved to {output_file}."
+
+        result: Dict[str, Any] = {
+            "output_data": output_file,
+            "pseudotime_key": "dpt_pseudotime",
+            "root": root_cell or root_label,
+            "plots": {"pseudotime_umap": plot_path} if plot_path else {},
+            "coords": coords_file,
+            "summary_text": summary_text,
+        }
+        return result
+
+    except Exception as e:
+        raise RuntimeError(f"Pseudotime analysis failed: {str(e)}")
+
+
+def _run_cell_communication(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Infer ligand-receptor interactions using average expression per cluster."""
+    try:
+        input_path = Path(params["adata_id"])
+        file_path = str(input_path)
+        if file_path.endswith(".h5ad"):
+            adata = sc.read_h5ad(file_path)
+        elif file_path.endswith(".h5"):
+            adata = sc.read_10x_h5(file_path)
+        else:
+            raise ValueError(f"Unsupported file format: {file_path}")
+
+        group_key = params["group_key"]
+        if group_key not in adata.obs.columns:
+            raise ValueError(f"Column '{group_key}' not found in adata.obs")
+
+        min_expr = params.get("min_expr")
+        output_dir = params.get("output_dir")
+        n_top_pairs = int(params.get("n_top_pairs") or 20)
+
+        # Load ligand-receptor reference from squidpy if available
+        try:
+            from squidpy.datasets import ligand_receptor as _lr_dataset
+
+            lr_db = _lr_dataset()
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError("Ligand-receptor reference could not be loaded from squidpy.") from exc
+
+        if lr_db is None or lr_db.empty:
+            raise RuntimeError("Ligand-receptor reference is empty.")
+
+        lr_pairs = lr_db[["ligand_complex", "receptor_complex"]].dropna()
+        lr_pairs = lr_pairs.rename(columns={"ligand_complex": "ligand", "receptor_complex": "receptor"})
+
+        # Compute mean expression per group
+        clusters = adata.obs[group_key].astype(str)
+        X = adata.X
+        if sparse.issparse(X):
+            X = X.toarray()
+        expr_df = pd.DataFrame(X, index=adata.obs_names, columns=adata.var_names)
+        group_means = expr_df.groupby(clusters).mean()
+
+        # Filter genes present
+        available = set(map(str, adata.var_names))
+        lr_pairs = lr_pairs[
+            lr_pairs["ligand"].isin(available) & lr_pairs["receptor"].isin(available)
+        ]
+        if lr_pairs.empty:
+            raise RuntimeError("No ligand-receptor pairs found in dataset genes.")
+
+        records: List[Dict[str, Any]] = []
+        for ligand, receptor in lr_pairs.itertuples(index=False):
+            ligand_expr = group_means[ligand]
+            receptor_expr = group_means[receptor]
+            if min_expr is not None:
+                ligand_expr = ligand_expr.where(ligand_expr >= float(min_expr), other=0.0)
+                receptor_expr = receptor_expr.where(receptor_expr >= float(min_expr), other=0.0)
+            for sender, lig_val in ligand_expr.items():
+                if lig_val <= 0:
+                    continue
+                for receiver, rec_val in receptor_expr.items():
+                    if rec_val <= 0:
+                        continue
+                    score = float(lig_val * rec_val)
+                    if score <= 0:
+                        continue
+                    records.append(
+                        {
+                            "sender": sender,
+                            "receiver": receiver,
+                            "ligand": ligand,
+                            "receptor": receptor,
+                            "score": score,
+                        }
+                    )
+
+        if not records:
+            raise RuntimeError("No interactions passed the expression filters.")
+
+        interactions = pd.DataFrame(records)
+        interactions.sort_values("score", ascending=False, inplace=True)
+        top_interactions = interactions.head(n_top_pairs)
+
+        output_table = _build_output_path(input_path, self.name, "top_interactions", ".csv", output_dir=output_dir)
+        interactions.to_csv(output_table, index=False)
+
+        plot_path = _build_output_path(input_path, self.name, "top_interactions", ".png", output_dir=output_dir)
+        fig, ax = plt.subplots(figsize=(8, 5))
+        display = top_interactions.copy()
+        display["pair"] = display["ligand"] + "→" + display["receptor"]
+        ax.barh(display["pair"], display["score"], color="#4C72B0")
+        ax.invert_yaxis()
+        ax.set_xlabel("Interaction score (mean ligand * mean receptor)")
+        ax.set_title(f"Top {len(display)} ligand-receptor pairs")
+        fig.tight_layout()
+        fig.savefig(plot_path, dpi=150)
+        plt.close(fig)
+
+        summary_text = (
+            f"Inferred {len(interactions)} ligand-receptor interactions across {interactions['sender'].nunique()} senders "
+            f"and {interactions['receiver'].nunique()} receivers. "
+            f"Top {len(display)} pairs saved to {output_table}."
+        )
+
+        return {
+            "table": output_table,
+            "top_pairs": top_interactions.to_dict(orient="records"),
+            "plot": plot_path,
+            "summary_text": summary_text,
+        }
+
+    except Exception as e:
+        raise RuntimeError(f"Cell-cell communication analysis failed: {str(e)}")
+
 
 def _run_preprocess_pipeline(self, params: Dict[str, Any]) -> Dict[str, Any]:
     """Combined QC filtering and clustering/embedding pipeline."""
@@ -298,13 +946,24 @@ def _run_preprocess_pipeline(self, params: Dict[str, Any]) -> Dict[str, Any]:
                 adata.var["mt"] = mito_mask
                 qc_vars = {"mt": adata.var["mt"]}
 
-        sc.pp.calculate_qc_metrics(
-            adata,
-            qc_vars=qc_vars,
-            percent_top=None,
-            log1p=False,
-            inplace=True,
-        )
+        try:
+            sc.pp.calculate_qc_metrics(
+                adata,
+                qc_vars=qc_vars if qc_vars else {},
+                percent_top=None,
+                log1p=False,
+                inplace=True,
+            )
+        except (TypeError, ValueError) as qc_err:
+            logger.warning("QC metrics calculation failed (%s), proceeding without qc_vars", qc_err)
+            # Retry with empty dict (scanpy doesn't accept None)
+            sc.pp.calculate_qc_metrics(
+                adata,
+                qc_vars={},
+                percent_top=None,
+                log1p=False,
+                inplace=True,
+            )
 
         gene_counts = np.asarray((adata.X > 0).sum(axis=0)).ravel()
         cell_counts = np.asarray((adata.X > 0).sum(axis=1)).ravel()
@@ -614,10 +1273,13 @@ def _run_de_analysis(self, params: Dict[str, Any]) -> Dict[str, Any]:
 
         adata.obs[group_key] = adata.obs[group_key].astype(str).astype("category")
         groups = list(adata.obs[group_key].cat.categories)
+        
+        # Filter out NaN/nan groups
+        groups = [g for g in groups if g.lower() not in ['nan', 'none', '']]
 
         if len(groups) < 2:
             raise ValueError(
-                f"Group column '{group_key}' must contain at least two distinct values"
+                f"Group column '{group_key}' must contain at least two distinct values (after filtering NaN)"
             )
 
         # Run DE analysis comparing each group against the rest
@@ -709,23 +1371,53 @@ def _run_de_analysis(self, params: Dict[str, Any]) -> Dict[str, Any]:
         )
         combined_df.to_csv(results_table, index=False)
 
-        # Placeholder for visualization output
-        volcano_plot = _build_output_path(
-            input_path,
-            self.name,
-            "volcano",
-            ".json",
-            output_dir=output_dir,
-        )
-        with open(volcano_plot, "w", encoding="utf-8") as handle:
-            json.dump(
-                {
-                    "group_key": group_key,
-                    "groups": groups,
-                    "points": volcano_payload,
-                },
-                handle,
+        # Generate volcano plots for each group
+        volcano_plots = {}
+        for group in groups:
+            group_df = sc.get.rank_genes_groups_df(adata, group=group)
+            
+            # Calculate -log10(pval)
+            group_df['neg_log10_pval'] = -np.log10(group_df['pvals_adj'].clip(lower=1e-300))
+            
+            # Create volcano plot
+            fig, ax = plt.subplots(figsize=(8, 6))
+            
+            # Classify points
+            sig_up = (group_df['logfoldchanges'] >= log2fc_threshold) & (group_df['pvals_adj'] <= fdr_threshold)
+            sig_down = (group_df['logfoldchanges'] <= -log2fc_threshold) & (group_df['pvals_adj'] <= fdr_threshold)
+            not_sig = ~(sig_up | sig_down)
+            
+            # Plot points
+            ax.scatter(group_df.loc[not_sig, 'logfoldchanges'], 
+                      group_df.loc[not_sig, 'neg_log10_pval'],
+                      c='gray', s=10, alpha=0.5, label='Not significant')
+            ax.scatter(group_df.loc[sig_up, 'logfoldchanges'], 
+                      group_df.loc[sig_up, 'neg_log10_pval'],
+                      c='#E74C3C', s=15, alpha=0.7, label='Upregulated')
+            ax.scatter(group_df.loc[sig_down, 'logfoldchanges'], 
+                      group_df.loc[sig_down, 'neg_log10_pval'],
+                      c='#3498DB', s=15, alpha=0.7, label='Downregulated')
+            
+            # Add threshold lines
+            ax.axhline(y=-np.log10(fdr_threshold), color='black', linestyle='--', linewidth=1, alpha=0.5)
+            ax.axvline(x=log2fc_threshold, color='black', linestyle='--', linewidth=1, alpha=0.5)
+            ax.axvline(x=-log2fc_threshold, color='black', linestyle='--', linewidth=1, alpha=0.5)
+            
+            ax.set_xlabel('Log2 Fold Change', fontsize=12)
+            ax.set_ylabel('-Log10(Adjusted P-value)', fontsize=12)
+            ax.set_title(f'Volcano Plot: {group} vs rest', fontsize=14, fontweight='bold')
+            ax.legend(loc='upper right', fontsize=9)
+            ax.grid(True, alpha=0.2)
+            
+            volcano_plot_path = _build_output_path(
+                input_path,
+                self.name,
+                f"volcano_{group}",
+                ".png",
+                output_dir=output_dir,
             )
+            save_figure(fig, volcano_plot_path)
+            volcano_plots[group] = volcano_plot_path
 
         leading_groups = [
             f"{group}: {metrics['significant']}" for group, metrics in summary.items()
@@ -753,8 +1445,8 @@ def _run_de_analysis(self, params: Dict[str, Any]) -> Dict[str, Any]:
         )
 
         return {
-            "de_table": results_table,
-            "volcano_plot": volcano_plot,
+            "table": results_table,
+            "volcano_plots": volcano_plots,
             "results": significant_results,
             "summary": summary,
             "significant_genes": int(total_significant),
@@ -988,26 +1680,21 @@ def _recommend_marker_sets(
         if not resolved_tissue:
             resolved_tissue = "unspecified tissue context"
 
-        explicit_expected = list(expected_types) if isinstance(expected_types, (list, tuple)) else []
-
-        fallback_types = []
-        lowered_tissue = resolved_tissue.lower()
-        for key, values in TISSUE_SPECIFIC_FALLBACKS.items():
-            if key in lowered_tissue:
-                fallback_types = list(values)
-                break
-        if not fallback_types:
-            fallback_types = list(DEFAULT_FALLBACK_CELL_TYPES)
-        if "CD4+ T cells" not in fallback_types:
-            fallback_types.append("CD4+ T cells")
-        if "CD8+ T cells" not in fallback_types:
-            fallback_types.append("CD8+ T cells")
+        explicit_expected = []
+        if isinstance(expected_types, (list, tuple)):
+            explicit_expected = [
+                str(cell_type).strip() for cell_type in expected_types if str(cell_type).strip()
+            ]
+            explicit_expected = list(dict.fromkeys(explicit_expected))
 
         resolved_question = question or (
-            "Suggest canonical marker genes for all major immune, stromal, epithelial, and malignant populations expected in this tissue, including CD4 and CD8 T cell subsets."
+            "Infer all relevant cell populations for this sample and propose comprehensive positive and negative marker panels that distinguish closely related phenotypes."
         )
 
-        target_cell_types = "\n".join(f"- {cell_type}" for cell_type in fallback_types)
+        if explicit_expected:
+            target_cell_types = "\n".join(f"- {cell_type}" for cell_type in explicit_expected)
+        else:
+            target_cell_types = "- Not specified; infer all relevant cell types from the tissue context and biological question."
 
         base_prompt = LLM_PROMPTS["marker_recommendation"].format(
             tissue_type=resolved_tissue,
@@ -1015,13 +1702,22 @@ def _recommend_marker_sets(
             target_cell_types=target_cell_types,
         )
 
-        prompt_variants = [
-            base_prompt,
-            base_prompt
-            + "\nEnsure every target cell type listed above appears in the JSON with at least three positive markers and no empty lists. Provide only JSON in your reply.",
-            base_prompt
-            + "\nIf you are uncertain about any requested cell type, include canonical immune and stromal cell types relevant to the tissue (e.g., T cells, B cells, NK cells, Monocytes, Endothelial cells) and populate the JSON accordingly.",
-        ]
+        if explicit_expected:
+            prompt_variants = [
+                base_prompt,
+                base_prompt
+                + "\nEnsure every requested cell type listed above appears in the JSON with rich positive and negative marker coverage. Respond with JSON only.",
+                base_prompt
+                + "\nIf any requested cell type seems ambiguous, return the closest well-defined alternative and explain the substitution in the rationale. Respond with JSON only.",
+            ]
+        else:
+            prompt_variants = [
+                base_prompt,
+                base_prompt
+                + "\nEnumerate every major cell population implied by the context and avoid umbrella categories. Respond with JSON only.",
+                base_prompt
+                + "\nDouble-check that each cell type has ≥4 positive markers, ≥2 negative markers when available, and no vague or duplicate labels. Respond with JSON only.",
+            ]
 
         marker_sets: Dict[str, Dict[str, Any]] = {}
         last_error: Optional[str] = None
@@ -1066,13 +1762,9 @@ def _recommend_marker_sets(
 
             missing_expected = []
             if explicit_expected:
-                filtered_sets: Dict[str, Dict[str, Any]] = {}
-                for cell_type in explicit_expected:
-                    if cell_type in candidate_sets:
-                        filtered_sets[cell_type] = candidate_sets[cell_type]
-                    else:
-                        missing_expected.append(cell_type)
-
+                missing_expected = [
+                    cell_type for cell_type in explicit_expected if cell_type not in candidate_sets
+                ]
                 if missing_expected:
                     last_error = (
                         f"Missing markers for requested cell types: {', '.join(missing_expected)}"
@@ -1082,35 +1774,13 @@ def _recommend_marker_sets(
                         attempt_idx,
                         ", ".join(missing_expected),
                     )
-
-                candidate_sets = filtered_sets
+                    continue
 
             if candidate_sets:
                 marker_sets = candidate_sets
-                if not missing_expected:
-                    break
+                break
 
-        user_supplied = custom_markers or {}
-        if user_supplied:
-            user_supplied = _normalise_marker_panels(user_supplied)
-            for cell_type, markers in user_supplied.items():
-                if cell_type in marker_sets:
-                    merged = list(
-                        dict.fromkeys([
-                            *marker_sets[cell_type].get("positive", []),
-                            *markers.get("positive", []),
-                        ])
-                    )
-                    marker_sets[cell_type]["positive"] = merged
-                    rationale = marker_sets[cell_type].get("rationale", "").strip()
-                    addon = markers.get("rationale", "").strip()
-                    if addon and addon not in rationale:
-                        rationale = (rationale + " " + addon).strip()
-                    marker_sets[cell_type]["rationale"] = rationale or "Includes user-provided markers."
-                else:
-                    marker_sets[cell_type] = markers
-
-        marker_sets = _normalise_marker_panels(marker_sets)
+        marker_sets, _ = _merge_marker_panels(marker_sets, custom_markers)
 
         if explicit_expected:
             missing_after_merge = [cell_type for cell_type in explicit_expected if cell_type not in marker_sets]
@@ -1218,6 +1888,62 @@ def _normalise_marker_panels(raw_sets: Optional[Dict[str, Any]]) -> Dict[str, Di
         }
 
     return normalised
+
+
+def _merge_marker_panels(
+    base_sets: Optional[Dict[str, Any]],
+    overlay_sets: Optional[Dict[str, Any]],
+) -> Tuple[Dict[str, Dict[str, Any]], bool]:
+    """Merge two marker panel dictionaries, preserving positives/negatives and rationales."""
+
+    base_normalised = _normalise_marker_panels(base_sets)
+    overlay_normalised = _normalise_marker_panels(overlay_sets)
+    if not overlay_normalised:
+        return base_normalised, False
+
+    def _clone_panel(panel: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "positive": list(panel.get("positive", [])),
+            "negative": list(panel.get("negative", [])),
+            "rationale": str(panel.get("rationale", "")).strip(),
+        }
+
+    merged: Dict[str, Dict[str, Any]] = {
+        cell_type: _clone_panel(panel) for cell_type, panel in base_normalised.items()
+    }
+    changed = False
+
+    for cell_type, panel in overlay_normalised.items():
+        existing = merged.get(cell_type)
+        if existing is None:
+            merged[cell_type] = _clone_panel(panel)
+            changed = True
+            continue
+
+        combined_pos = list(dict.fromkeys([*existing.get("positive", []), *panel.get("positive", [])]))
+        combined_neg = list(dict.fromkeys([*existing.get("negative", []), *panel.get("negative", [])]))
+        combined_neg = [gene for gene in combined_neg if gene and gene not in combined_pos]
+
+        rationale_parts = [
+            existing.get("rationale", "").strip(),
+            str(panel.get("rationale", "")).strip(),
+        ]
+        combined_rationale = " ".join(part for part in rationale_parts if part).strip()
+
+        if (
+            combined_pos != existing.get("positive", [])
+            or combined_neg != existing.get("negative", [])
+            or (combined_rationale and combined_rationale != existing.get("rationale", "").strip())
+        ):
+            changed = True
+
+        existing["positive"] = combined_pos
+        existing["negative"] = combined_neg
+        if combined_rationale:
+            existing["rationale"] = combined_rationale
+
+    merged = _normalise_marker_panels(merged)
+    return merged, changed
 # ---------------------------------------------------------------------------
 # Metadata Inspector Tool
 # ---------------------------------------------------------------------------
@@ -1336,7 +2062,7 @@ def _run_cell_typing(self, params: Dict[str, Any]) -> Dict[str, Any]:
 
         output_dir = params.get("output_dir")
 
-        marker_sets = params.get("marker_sets") or {}
+        marker_sets = _normalise_marker_panels(params.get("marker_sets"))
         marker_summary: Optional[str] = None
         marker_origin = "provided"
 
@@ -1348,49 +2074,17 @@ def _run_cell_typing(self, params: Dict[str, Any]) -> Dict[str, Any]:
                 question=params.get("question"),
                 custom_markers=params.get("custom_markers"),
             )
-            marker_sets = recommendation["marker_sets"]
+            marker_sets = _normalise_marker_panels(recommendation["marker_sets"])
             marker_summary = recommendation.get("summary_text")
             marker_origin = "auto-recommended"
-        custom_overlay = params.get("custom_markers") or {}
-        if custom_overlay:
-            custom_overlay = _normalise_marker_panels(custom_overlay)
-            for cell_type, markers in custom_overlay.items():
-                if cell_type in marker_sets:
-                    merged_pos = list(
-                        dict.fromkeys(
-                            [
-                                *marker_sets[cell_type].get("positive", []),
-                                *markers.get("positive", []),
-                            ]
-                        )
-                    )
-                    marker_sets[cell_type]["positive"] = merged_pos
-                    merged_neg = list(
-                        dict.fromkeys(
-                            [
-                                *marker_sets[cell_type].get("negative", []),
-                                *markers.get("negative", []),
-                            ]
-                        )
-                    )
-                    marker_sets[cell_type]["negative"] = merged_neg
-                    rationale = marker_sets[cell_type].get("rationale", "").strip()
-                    addon = markers.get("rationale", "").strip()
-                    if addon and addon not in rationale:
-                        rationale = (rationale + " " + addon).strip()
-                    marker_sets[cell_type]["rationale"] = rationale or "Includes user-provided markers."
-                else:
-                    marker_sets[cell_type] = markers
-
-            marker_sets = _normalise_marker_panels(marker_sets)
-            if marker_origin == "provided":
-                marker_origin = "provided+custom"
+        marker_sets, overlay_applied = _merge_marker_panels(marker_sets, params.get("custom_markers"))
+        if overlay_applied and "custom" not in marker_origin:
+            marker_origin = f"{marker_origin}+custom"
 
         # Score cells using marker genes
         predicted_types = []
         confidence_scores = []
 
-        marker_sets = _normalise_marker_panels(marker_sets)
         var_name_set = set(map(str, adata.var_names))
         filtered_marker_sets: Dict[str, Dict[str, List[str]]] = {}
 
@@ -1583,157 +2277,6 @@ def _run_cell_typing(self, params: Dict[str, Any]) -> Dict[str, Any]:
         
     except Exception as e:
         raise RuntimeError(f"Cell typing failed: {str(e)}")
-
-
-# ---------------------------------------------------------------------------
-# Spatial Neighborhood Tool
-# ---------------------------------------------------------------------------
-
-
-class SpatialNeighborhoodInput(BaseModel):
-    """Input schema for spatial neighborhood analysis."""
-
-    adata_id: str = Field(description="Data object handle")
-    coord_type: str = Field(
-        default="generic",
-        description="Coordinate type passed to squidpy (generic/grid).",
-    )
-    n_neighbors: Optional[int] = Field(
-        default=6,
-        gt=0,
-        description="Number of nearest spatial neighbors to connect.",
-    )
-    radius: Optional[float] = Field(
-        default=None,
-        gt=0,
-        description="Optional spatial radius for neighborhood graph.",
-    )
-    delaunay: bool = Field(
-        default=True,
-        description="Whether to compute Delaunay triangulation when applicable.",
-    )
-    set_diag: bool = Field(
-        default=True,
-        description="Whether to include self connections on diagonal.",
-    )
-    key_added: str = Field(
-        default="spatial",
-        description="Base key for storing spatial neighbor graph in AnnData.",
-    )
-
-
-class SpatialNeighborhoodTool(BioToolBase):
-    name = "spatial_neighborhood"
-    description = "Construct spatial neighbor graphs and summarize neighborhood metrics"
-    input_schema = SpatialNeighborhoodInput
-
-
-def _run_spatial_neighborhood(self, params: Dict[str, Any]) -> Dict[str, Any]:
-    """Construct spatial neighbor graph and summarize neighborhood statistics."""
-    try:
-        input_path = Path(params["adata_id"])
-        file_path = str(input_path)
-        if file_path.endswith(".h5ad"):
-            adata = sc.read_h5ad(file_path)
-        elif file_path.endswith(".h5"):
-            adata = sc.read_10x_h5(file_path)
-        else:
-            raise ValueError(f"Unsupported file format: {file_path}")
-
-        if "spatial" not in adata.obsm:
-            raise ValueError("AnnData object must contain spatial coordinates in adata.obsm['spatial'].")
-
-        key_added = params.get("key_added") or "spatial"
-        coord_type = params.get("coord_type") or "generic"
-        neighbor_kwargs: Dict[str, Any] = {
-            "coord_type": coord_type,
-            "delaunay": params.get("delaunay", True),
-            "set_diag": params.get("set_diag", True),
-            "key_added": key_added,
-        }
-
-        if params.get("n_neighbors") is not None:
-            neighbor_kwargs["n_neighs"] = int(params["n_neighbors"])
-        if params.get("radius") is not None:
-            neighbor_kwargs["radius"] = float(params["radius"])
-
-        sq.gr.spatial_neighbors(adata, **neighbor_kwargs)
-
-        connectivity_key = f"{key_added}_connectivities"
-        distance_key = f"{key_added}_distances"
-        neighbor_graph = adata.obsp.get(connectivity_key)
-        if neighbor_graph is None:
-            raise RuntimeError("Spatial neighbor graph was not created as expected.")
-
-        neighbor_counts = np.asarray(neighbor_graph.sum(axis=1)).ravel()
-        stats = {
-            "mean_neighbors": float(np.mean(neighbor_counts)) if neighbor_counts.size else 0.0,
-            "median_neighbors": float(np.median(neighbor_counts)) if neighbor_counts.size else 0.0,
-            "min_neighbors": float(np.min(neighbor_counts)) if neighbor_counts.size else 0.0,
-            "max_neighbors": float(np.max(neighbor_counts)) if neighbor_counts.size else 0.0,
-        }
-
-        neighbor_counts_file = _build_output_path(input_path, self.name, "neighbor_counts", ".csv")
-        pd.DataFrame({"cell_id": adata.obs_names, "n_neighbors": neighbor_counts}).to_csv(
-            neighbor_counts_file,
-            index=False,
-        )
-
-        connectivities_file = _build_output_path(input_path, self.name, "connectivities", ".npz")
-        sparse.save_npz(connectivities_file, neighbor_graph.tocsr())
-
-        distances = adata.obsp.get(distance_key)
-        distances_file = None
-        if distances is not None:
-            mean_distance = float(np.mean(distances.data)) if distances.nnz else 0.0
-            stats["mean_distance"] = mean_distance
-            distances_file = _build_output_path(input_path, self.name, "distances", ".npz")
-            sparse.save_npz(distances_file, distances.tocsr())
-        else:
-            stats["mean_distance"] = 0.0
-
-        coords = adata.obsm["spatial"]
-        plot_file = _build_output_path(input_path, self.name, "neighbor_density", ".png")
-        fig, ax = plt.subplots(figsize=(5, 5))
-        scatter = ax.scatter(
-            coords[:, 0],
-            coords[:, 1],
-            c=neighbor_counts,
-            cmap="viridis",
-            s=35,
-            edgecolors="none",
-        )
-        ax.set_title("Spatial neighbor counts")
-        ax.set_xlabel("spatial-x")
-        ax.set_ylabel("spatial-y")
-        ax.invert_yaxis()
-        cbar = fig.colorbar(scatter, ax=ax)
-        cbar.set_label("# neighbors")
-        fig.tight_layout()
-        fig.savefig(plot_file, dpi=150)
-        plt.close(fig)
-
-        summary_text = (
-            f"Computed spatial neighbors ('{key_added}') for {adata.n_obs:,} observations. "
-            f"Average neighbors: {stats['mean_neighbors']:.2f}, median: {stats['median_neighbors']:.2f}. "
-            f"Neighbor counts saved to {neighbor_counts_file}."
-        )
-
-        result: Dict[str, Any] = {
-            "neighbors_key": key_added,
-            "connectivities": connectivities_file,
-            "neighbor_counts": neighbor_counts_file,
-            "neighbor_stats": stats,
-            "plots": {"neighbor_density": plot_file},
-            "summary_text": summary_text,
-        }
-        if distances_file:
-            result["distances"] = distances_file
-
-        return result
-
-    except Exception as e:
-        raise RuntimeError(f"Spatial neighborhood analysis failed: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -2085,6 +2628,10 @@ def _run_spatial_domain(self, params: Dict[str, Any]) -> Dict[str, Any]:
 PreprocessPipelineTool._run = _run_preprocess_pipeline
 DEAnalysisTool._run = _run_de_analysis
 CellTypingTool._run = _run_cell_typing
-SpatialNeighborhoodTool._run = _run_spatial_neighborhood
 SpatialDomainTool._run = _run_spatial_domain
 MetadataInspectorTool._run = _run_metadata_inspector
+BatchCorrectionTool._run = _run_batch_correction
+SpatialGenePlotTool._run = _run_spatial_gene_plot
+UMAPGenePlotTool._run = _run_umap_gene_plot
+PseudotimeTool._run = _run_pseudotime
+CellCommunicationTool._run = _run_cell_communication

@@ -23,9 +23,12 @@ Usage:
 
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 import shutil
+import fcntl
+import time
 
 import h5py
 import numpy as np
@@ -37,6 +40,58 @@ from matplotlib.path import Path as MplPath
 
 logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger(__name__)
+
+
+def debug_print(msg: str):
+    """Print debug messages to stderr to avoid polluting stdout JSON."""
+    print(msg, file=sys.stderr)
+
+
+class H5ADFileLock:
+    """Context manager for file locking to prevent concurrent h5ad access."""
+    
+    def __init__(self, h5ad_path: Path, mode: str = 'r', timeout: float = 30.0):
+        """
+        Args:
+            h5ad_path: Path to the h5ad file
+            mode: 'r' for read, 'w' for write
+            timeout: Maximum time to wait for lock in seconds
+        """
+        self.h5ad_path = h5ad_path
+        self.mode = mode
+        self.timeout = timeout
+        self.lock_file = h5ad_path.parent / f".{h5ad_path.name}.lock"
+        self.lock_fd = None
+        
+    def __enter__(self):
+        """Acquire file lock."""
+        start_time = time.time()
+        self.lock_fd = open(self.lock_file, 'w')
+        
+        while True:
+            try:
+                # LOCK_EX for exclusive lock (write), LOCK_SH for shared lock (read)
+                lock_type = fcntl.LOCK_EX if self.mode == 'w' else fcntl.LOCK_SH
+                fcntl.flock(self.lock_fd.fileno(), lock_type | fcntl.LOCK_NB)
+                LOGGER.debug(f"Acquired {self.mode} lock on {self.h5ad_path.name}")
+                return self
+            except IOError as e:
+                if time.time() - start_time > self.timeout:
+                    raise TimeoutError(f"Could not acquire lock on {self.h5ad_path.name} after {self.timeout}s") from e
+                time.sleep(0.1)
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Release file lock."""
+        if self.lock_fd:
+            fcntl.flock(self.lock_fd.fileno(), fcntl.LOCK_UN)
+            self.lock_fd.close()
+            LOGGER.debug(f"Released lock on {self.h5ad_path.name}")
+            # Clean up lock file if no errors
+            if exc_type is None and self.lock_file.exists():
+                try:
+                    self.lock_file.unlink()
+                except:
+                    pass
 
 
 class XeniumProcessor:
@@ -93,9 +148,10 @@ class XeniumProcessor:
             adata.uns['image_path'] = str(image_path)
             adata.uns['affine_matrix'] = affine_matrix.tolist()
             
-            # Save preprocessed h5ad
+            # Save preprocessed h5ad with file locking
             output_path = self.output_dir / f"{slide_id}_processed.h5ad"
-            adata.write_h5ad(output_path)
+            with H5ADFileLock(output_path, mode='w'):
+                adata.write_h5ad(output_path)
             
             LOGGER.info(f"[{slide_id}] Preprocessing complete: {output_path}")
             
@@ -148,41 +204,70 @@ class XeniumProcessor:
         Returns:
             Dictionary with ROI statistics and updated h5ad path
         """
+        debug_print(f"\n{'='*80}")
+        debug_print(f"🔵 [PYTHON ROI] Starting add_roi()")
+        debug_print(f"{'='*80}")
+        debug_print(f"📋 Parameters:")
+        debug_print(f"   - slide_id: {slide_id}")
+        debug_print(f"   - roi_name: {roi_name}")
+        debug_print(f"   - vertices count: {len(roi_vertices_pixels)}")
+        debug_print(f"   - first vertex: {roi_vertices_pixels[0] if roi_vertices_pixels else None}")
+        debug_print(f"   - last vertex: {roi_vertices_pixels[-1] if roi_vertices_pixels else None}")
+        
         LOGGER.info(f"[{slide_id}] Adding ROI: {roi_name}")
         
         try:
             # Load preprocessed h5ad
             h5ad_path = self.output_dir / f"{slide_id}_processed.h5ad"
+            debug_print(f"📂 [PYTHON ROI] Looking for h5ad at: {h5ad_path}")
+            
             if not h5ad_path.exists():
+                debug_print(f"❌ [PYTHON ROI] h5ad file not found!")
                 raise FileNotFoundError(f"Preprocessed h5ad not found. Run preprocess_dataset first.")
             
+            debug_print(f"✅ [PYTHON ROI] h5ad file found, loading...")
             adata = self._read_h5ad(h5ad_path)
+            debug_print(f"✅ [PYTHON ROI] Loaded AnnData: {adata.n_obs} cells × {adata.n_vars} genes")
             
             # Convert vertices to numpy array
+            debug_print(f"🔧 [PYTHON ROI] Converting vertices to numpy array...")
             vertices_array = np.array(roi_vertices_pixels, dtype=float)
             if vertices_array.ndim != 2 or vertices_array.shape[1] != 2:
                 raise ValueError("roi_vertices_pixels must be [[x, y], [x, y], ...]")
+            debug_print(f"✅ [PYTHON ROI] Vertices shape: {vertices_array.shape}")
             
             # Get affine matrix from uns
             affine_matrix = np.array(adata.uns.get('affine_matrix', None))
+            debug_print(f"🔧 [PYTHON ROI] Affine matrix shape: {affine_matrix.shape if affine_matrix is not None else None}")
             
             # Label cells in ROI
+            debug_print(f"🎯 [PYTHON ROI] Running point-in-polygon test...")
             adata = self._label_cells_in_roi(adata, vertices_array, roi_name, affine_matrix)
+            debug_print(f"✅ [PYTHON ROI] Point-in-polygon test completed")
             
-            # Save updated h5ad
-            adata.write_h5ad(h5ad_path)
+            # Save updated h5ad with file locking
+            debug_print(f"💾 [PYTHON ROI] Saving updated h5ad to: {h5ad_path}")
+            with H5ADFileLock(h5ad_path, mode='w'):
+                adata.write_h5ad(h5ad_path)
+            debug_print(f"✅ [PYTHON ROI] h5ad file saved successfully")
             
             # Calculate statistics
             roi_mask = adata.obs[roi_name].values
             n_in_roi = int(roi_mask.sum())
             percentage = 100 * n_in_roi / adata.n_obs
             
-            # Get list of all ROIs
-            roi_columns = [col for col in adata.obs.columns if col.startswith('roi_') or col == 'roi']
+            debug_print(f"\n📊 [PYTHON ROI] Statistics:")
+            debug_print(f"   - Total cells: {adata.n_obs}")
+            debug_print(f"   - Cells in ROI: {n_in_roi}")
+            debug_print(f"   - Percentage: {percentage:.2f}%")
+            
+            # Get list of all ROIs (case-insensitive)
+            roi_columns = [col for col in adata.obs.columns if col.lower().startswith('roi_') or col.lower() == 'roi']
+            debug_print(f"   - All ROIs in dataset: {roi_columns}")
             
             LOGGER.info(f"[{slide_id}] ROI '{roi_name}' added: {n_in_roi} cells ({percentage:.1f}%)")
             
-            return {
+            result = {
                 'success': True,
                 'slide_id': slide_id,
                 'roi_name': roi_name,
@@ -195,13 +280,22 @@ class XeniumProcessor:
                 'message': f'ROI {roi_name} added successfully'
             }
             
+            debug_print(f"\n✅ [PYTHON ROI] ROI processing completed successfully!")
+            debug_print(f"{'='*80}\n")
+            
+            return result
+            
         except Exception as e:
-            LOGGER.error(f"[{slide_id}] Failed to add ROI '{roi_name}': {str(e)}")
+            error_msg = str(e)
+            debug_print(f"\n❌ [PYTHON ROI] Error occurred: {error_msg}")
+            debug_print(f"{'='*80}\n")
+            
+            LOGGER.error(f"[{slide_id}] Failed to add ROI '{roi_name}': {error_msg}")
             return {
                 'success': False,
                 'slide_id': slide_id,
                 'roi_name': roi_name,
-                'error': str(e),
+                'error': error_msg,
                 'message': 'Failed to add ROI'
             }
     
@@ -241,11 +335,12 @@ class XeniumProcessor:
                 if key in adata.uns:
                     del adata.uns[key]
             
-            # Save updated h5ad
-            adata.write_h5ad(h5ad_path)
+            # Save updated h5ad with file locking
+            with H5ADFileLock(h5ad_path, mode='w'):
+                adata.write_h5ad(h5ad_path)
             
-            # Get remaining ROIs
-            roi_columns = [col for col in adata.obs.columns if col.startswith('roi_') or col == 'roi']
+            # Get remaining ROIs (case-insensitive)
+            roi_columns = [col for col in adata.obs.columns if col.lower().startswith('roi_') or col.lower() == 'roi']
             
             LOGGER.info(f"[{slide_id}] ROI '{roi_name}' deleted")
             
@@ -288,20 +383,30 @@ class XeniumProcessor:
             
             adata = self._read_h5ad(h5ad_path)
             
-            # Find all ROI columns
-            roi_columns = [col for col in adata.obs.columns if col.startswith('roi_') or col == 'roi']
+            # Find all ROI columns (case-insensitive)
+            roi_columns = [col for col in adata.obs.columns if col.lower().startswith('roi_') or col.lower() == 'roi']
             
             rois = []
             for roi_name in roi_columns:
                 n_cells = int(adata.obs[roi_name].sum())
                 percentage = 100 * n_cells / adata.n_obs
                 
+                # Get polygon data and convert ndarrays to lists for JSON serialization
+                polygon_pixels = adata.uns.get(f"{roi_name}_polygon_pixels", None)
+                polygon_centroids = adata.uns.get(f"{roi_name}_polygon_centroids", None)
+                
+                # Convert numpy arrays to lists
+                if isinstance(polygon_pixels, np.ndarray):
+                    polygon_pixels = polygon_pixels.tolist()
+                if isinstance(polygon_centroids, np.ndarray):
+                    polygon_centroids = polygon_centroids.tolist()
+                
                 rois.append({
                     'name': roi_name,
                     'n_cells': n_cells,
                     'percentage': round(percentage, 2),
-                    'polygon_pixels': adata.uns.get(f"{roi_name}_polygon_pixels", None),
-                    'polygon_centroids': adata.uns.get(f"{roi_name}_polygon_centroids", None)
+                    'polygon_pixels': polygon_pixels,
+                    'polygon_centroids': polygon_centroids
                 })
             
             return {
@@ -461,7 +566,27 @@ class XeniumProcessor:
     def _map_cells_to_pixels(self, adata: AnnData, affine_matrix: np.ndarray) -> AnnData:
         """Map cell coordinates to pixel space."""
         centroid_coords = adata.obs[["x_centroid", "y_centroid"]].to_numpy(float)
+        
+        # DEBUG: Log coordinate transformation
+        debug_print(f"\n🔍 [PREPROCESS DEBUG] Coordinate Transformation:")
+        debug_print(f"   Original cell coordinates (x_centroid, y_centroid in microns):")
+        debug_print(f"      - x range: [{centroid_coords[:, 0].min():.2f}, {centroid_coords[:, 0].max():.2f}]")
+        debug_print(f"      - y range: [{centroid_coords[:, 1].min():.2f}, {centroid_coords[:, 1].max():.2f}]")
+        debug_print(f"      - Sample cells (first 5):")
+        for i in range(min(5, len(centroid_coords))):
+            debug_print(f"         Cell {i}: ({centroid_coords[i, 0]:.2f}, {centroid_coords[i, 1]:.2f}) microns")
+        
         pixel_coords = self._apply_affine(centroid_coords, affine_matrix)
+        
+        debug_print(f"   After affine transformation (x_pixel, y_pixel):")
+        debug_print(f"      - x range: [{pixel_coords[:, 0].min():.2f}, {pixel_coords[:, 0].max():.2f}]")
+        debug_print(f"      - y range: [{pixel_coords[:, 1].min():.2f}, {pixel_coords[:, 1].max():.2f}]")
+        debug_print(f"      - Sample cells (first 5):")
+        for i in range(min(5, len(pixel_coords))):
+            debug_print(f"         Cell {i}: ({pixel_coords[i, 0]:.2f}, {pixel_coords[i, 1]:.2f}) pixels")
+        debug_print(f"   Affine matrix used:")
+        debug_print(f"      {affine_matrix}")
+        
         adata.obs[["x_pixel", "y_pixel"]] = pixel_coords
         return adata
     
@@ -474,8 +599,33 @@ class XeniumProcessor:
     ) -> AnnData:
         """Label cells within ROI polygon."""
         pixel_coords = adata.obs[["x_pixel", "y_pixel"]].to_numpy(float)
+        
+        # DEBUG: Log coordinate ranges
+        debug_print(f"\n🔍 [PYTHON ROI DEBUG] Coordinate Analysis:")
+        debug_print(f"   Cell coordinates (x_pixel, y_pixel):")
+        debug_print(f"      - x range: [{pixel_coords[:, 0].min():.2f}, {pixel_coords[:, 0].max():.2f}]")
+        debug_print(f"      - y range: [{pixel_coords[:, 1].min():.2f}, {pixel_coords[:, 1].max():.2f}]")
+        debug_print(f"      - Sample cells (first 5):")
+        for i in range(min(5, len(pixel_coords))):
+            debug_print(f"         Cell {i}: ({pixel_coords[i, 0]:.2f}, {pixel_coords[i, 1]:.2f})")
+        
+        debug_print(f"   ROI polygon vertices:")
+        debug_print(f"      - x range: [{roi_vertices_pixels[:, 0].min():.2f}, {roi_vertices_pixels[:, 0].max():.2f}]")
+        debug_print(f"      - y range: [{roi_vertices_pixels[:, 1].min():.2f}, {roi_vertices_pixels[:, 1].max():.2f}]")
+        debug_print(f"      - Vertices:")
+        for i, vertex in enumerate(roi_vertices_pixels):
+            debug_print(f"         Vertex {i}: ({vertex[0]:.2f}, {vertex[1]:.2f})")
+        
+        debug_print(f"   Affine matrix:")
+        debug_print(f"      {affine_matrix}")
+        
         roi_path = MplPath(roi_vertices_pixels)
         mask = roi_path.contains_points(pixel_coords)
+        
+        debug_print(f"\n   Point-in-polygon result:")
+        debug_print(f"      - Cells tested: {len(mask)}")
+        debug_print(f"      - Cells inside ROI: {mask.sum()}")
+        debug_print(f"      - Percentage: {100 * mask.sum() / len(mask):.2f}%")
         
         adata.obs[roi_column] = mask
         adata.uns[f"{roi_column}_polygon_pixels"] = roi_vertices_pixels.tolist()
@@ -488,9 +638,10 @@ class XeniumProcessor:
         return adata
     
     def _read_h5ad(self, h5ad_path: Path) -> AnnData:
-        """Read h5ad file."""
+        """Read h5ad file with file locking."""
         import scanpy as sc
-        return sc.read_h5ad(h5ad_path)
+        with H5ADFileLock(h5ad_path, mode='r'):
+            return sc.read_h5ad(h5ad_path)
     
     def _get_image_shape(self, image_path: str) -> Tuple[int, int]:
         """Get image dimensions."""

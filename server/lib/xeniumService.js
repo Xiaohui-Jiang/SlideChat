@@ -50,6 +50,13 @@ export default class XeniumService {
    * This runs STEP 4 automatically
    */
   async addROI(slideId, roiName, vertices) {
+    console.log('🔵 [XENIUM SERVICE] addROI called:', {
+      slideId,
+      roiName,
+      verticesCount: vertices.length,
+      vertices: vertices.slice(0, 3).concat(['...']) // Show first 3 vertices
+    });
+    
     const command = {
       action: 'add_roi',
       slide_id: slideId,
@@ -57,7 +64,23 @@ export default class XeniumService {
       roi_vertices: vertices // [[x,y], [x,y], ...]
     };
 
-    return this._executePython(command);
+    console.log('🐍 [XENIUM SERVICE] Executing Python with command:', {
+      action: command.action,
+      slide_id: command.slide_id,
+      roi_name: command.roi_name,
+      vertices_count: command.roi_vertices.length
+    });
+    
+    const result = await this._executePython(command);
+    
+    console.log('✅ [XENIUM SERVICE] Python execution completed:', {
+      success: result.success,
+      n_cells_in_roi: result.n_cells_in_roi,
+      n_cells_total: result.n_cells_total,
+      percentage: result.percentage
+    });
+    
+    return result;
   }
 
   /**
@@ -123,33 +146,55 @@ export default class XeniumService {
         '--command', JSON.stringify(command)
       ];
 
+      console.log('🚀 [PYTHON SPAWN] Starting Python subprocess:', {
+        pythonPath: this.pythonPath,
+        script: this.pythonScript,
+        action: command.action
+      });
+
       const python = spawn(this.pythonPath, args);
       let stdout = '';
       let stderr = '';
 
       python.stdout.on('data', (data) => {
-        stdout += data.toString();
+        const output = data.toString();
+        stdout += output;
+        // Log Python stdout in real-time
+        if (output.trim()) {
+          console.log('🐍 [PYTHON STDOUT]:', output.trim());
+        }
       });
 
       python.stderr.on('data', (data) => {
-        stderr += data.toString();
+        const error = data.toString();
+        stderr += error;
+        // Log Python stderr in real-time
+        if (error.trim()) {
+          console.log('⚠️  [PYTHON STDERR]:', error.trim());
+        }
       });
 
       python.on('close', (code) => {
+        console.log(`🏁 [PYTHON SPAWN] Process exited with code ${code}`);
+        
         if (code !== 0) {
+          console.error('❌ [PYTHON SPAWN] Process failed:', stderr);
           reject(new Error(`Python process failed: ${stderr}`));
           return;
         }
 
         try {
           const result = JSON.parse(stdout);
+          console.log('✅ [PYTHON SPAWN] Successfully parsed result');
           resolve(result);
         } catch (error) {
+          console.error('❌ [PYTHON SPAWN] Failed to parse output:', stdout);
           reject(new Error(`Failed to parse Python output: ${stdout}`));
         }
       });
 
       python.on('error', (error) => {
+        console.error('❌ [PYTHON SPAWN] Failed to spawn:', error.message);
         reject(new Error(`Failed to spawn Python: ${error.message}`));
       });
     });

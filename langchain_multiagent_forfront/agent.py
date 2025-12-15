@@ -69,7 +69,7 @@ DEFAULT_OPENAI_KEY_PATH = Path("~/.openai/api_key")
 OPENAI_KEY_ENV_VAR = "OPENAI_API_KEY"
 OPENAI_KEY_PATH_ENV_VAR = "OPENAI_API_KEY_FILE"
 # Direct API key - set this if you want to hardcode the key
-DIRECT_OPENAI_KEY = "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"
+DIRECT_OPENAI_KEY = os.getenv("OPENAI_API_KEY", "")
 
 
 def _read_openai_key_file(path: Path) -> Optional[str]:

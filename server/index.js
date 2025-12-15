@@ -517,10 +517,26 @@ async function ensurePipelineDatasetAvailable(projectId, imageId) {
 
 async function processApplyRoiJob(job) {
   const { projectId, imageId, roiName, polygon, geometry } = job.payload;
+  
+  console.log('\n' + '='.repeat(80));
+  console.log('🔄 [ROI JOB] Starting ROI Processing');
+  console.log('='.repeat(80));
+  console.log('📋 Job Details:', {
+    jobId: job.id,
+    projectId,
+    imageId,
+    roiName,
+    polygonVertices: polygon.length,
+    geometry
+  });
+  
   const imageEntry = await getProjectImage(projectId, imageId);
   if (!imageEntry.status?.processed) {
+    console.log('❌ [ROI JOB] Dataset not ready, will retry');
     throw new RetryableJobError('Processed dataset not ready yet', 6000);
   }
+  
+  console.log('✅ [ROI JOB] Dataset ready, updating status to "processing"');
 
   await updateRoiJob({
     projectId,
@@ -531,9 +547,24 @@ async function processApplyRoiJob(job) {
     error: null
   });
 
+  console.log('🐍 [ROI JOB] Calling Python processor...');
+  const startTime = Date.now();
+  
   const service = createProjectXeniumService(projectId);
   const result = await applyPipelineAdd({ projectId, imageId, roiName, vertices: polygon });
+  
+  const duration = Date.now() - startTime;
+  console.log(`✅ [ROI JOB] Python processing completed in ${duration}ms`);
+  console.log('📊 [ROI JOB] Results:', {
+    success: result?.success,
+    n_cells_in_roi: result?.n_cells_in_roi,
+    n_cells_total: result?.n_cells_total,
+    percentage: result?.percentage?.toFixed(2) + '%',
+    roi_name: result?.roi_name
+  });
 
+  console.log('💾 [ROI JOB] Updating ROI metadata with stats...');
+  
   await updateRoiJob({
     projectId,
     imageId,
@@ -569,7 +600,12 @@ async function processApplyRoiJob(job) {
     }
   });
 
+  console.log('🔄 [ROI JOB] Syncing processed dataset...');
   await syncProcessedDataset({ projectId, imageId, reason: 'roi-add' });
+  
+  console.log('✅ [ROI JOB] ROI processing completed successfully');
+  console.log('📂 [ROI JOB] h5ad file updated with new ROI column');
+  console.log('='.repeat(80) + '\n');
 }
 
 async function processJob(job) {
@@ -711,9 +747,27 @@ const fetchPipelineRois = async ({ projectId, imageId }) => {
 };
 
 const applyPipelineAdd = async ({ projectId, imageId, roiName, vertices }) => {
+  console.log('🔧 [PIPELINE] applyPipelineAdd called:', {
+    projectId,
+    imageId,
+    roiName,
+    verticesCount: vertices.length,
+    firstVertex: vertices[0],
+    lastVertex: vertices[vertices.length - 1]
+  });
+  
   await ensurePipelineDatasetAvailable(projectId, imageId);
+  console.log('✅ [PIPELINE] Dataset available, calling Python service...');
+  
   const service = createProjectXeniumService(projectId);
   const result = await service.addROI(imageId, roiName, vertices);
+  
+  console.log('🐍 [PIPELINE] Python service returned:', {
+    success: result.success,
+    error: result.error,
+    message: result.message
+  });
+  
   if (!result.success) {
     const err = new Error(result.error || result.message || 'Failed to add ROI');
     err.statusCode = 400;
@@ -1119,6 +1173,35 @@ app.get('/api/projects/:projectId/images/:imageId/rois', listRoiHandler);
 app.post('/api/projects/:projectId/images/:imageId/rois', createRoiHandler);
 app.put('/api/projects/:projectId/images/:imageId/rois/:roiId', updateRoiHandler);
 app.delete('/api/projects/:projectId/images/:imageId/rois/:roiId', deleteRoiHandler);
+
+// Get h5ad file path for multiagent analysis
+app.get('/api/projects/:projectId/images/:imageId/h5ad-path', (req, res) => {
+  const { projectId, imageId } = req.params;
+  
+  try {
+    const { h5adPath } = getProjectPaths(projectId, imageId);
+    
+    // Check if the file exists
+    if (!fs.existsSync(h5adPath)) {
+      return res.status(404).json({ 
+        error: 'Processed h5ad file not found',
+        message: 'Please preprocess the dataset first'
+      });
+    }
+    
+    // Return the absolute path for Python multiagent service
+    res.json({ 
+      h5adPath,
+      success: true
+    });
+  } catch (error) {
+    console.error('Error getting h5ad path:', error);
+    res.status(500).json({ 
+      error: 'Failed to get h5ad path',
+      message: error.message
+    });
+  }
+});
 
 // Health check
 app.get('/api/health', (req, res) => {

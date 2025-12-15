@@ -9,15 +9,20 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Type
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 
-from biotools import (
+from .biotools import (
     BioToolBase,
+    BatchCorrectionTool,
+    CellCommunicationTool,
     CellTypingTool,
     DEAnalysisTool,
+    UMAPGenePlotTool,
     MetadataInspectorTool,
     PreprocessPipelineTool,
+    SpatialGenePlotTool,
     SpatialDomainTool,
+    PseudotimeTool,
 )
-from prompts import LLM_PROMPTS, LLM_SYSTEM_MESSAGES, PARAMETER_PROMPTS
+from .prompts import LLM_PROMPTS, LLM_SYSTEM_MESSAGES, PARAMETER_PROMPTS
 
 LOGGER = logging.getLogger(__name__)
 
@@ -148,6 +153,192 @@ def _de_step() -> PlanStep:
         ],
     )
 
+def _batch_correction_step() -> PlanStep:
+    return PlanStep(
+        identifier="batch_correction",
+        title="Batch correction",
+        description="Correct batch effects across samples and (optionally) recompute embeddings.",
+        tool_cls=BatchCorrectionTool,
+        param_prompts=[
+            ParameterPrompt(
+                name="adata_id",
+                prompt=PARAMETER_PROMPTS["batch_correction"]["adata_id"],
+                type=str,
+                context_key="adata_id",
+            ),
+            ParameterPrompt(
+                name="batch_key",
+                prompt=PARAMETER_PROMPTS["batch_correction"]["batch_key"],
+                type=str,
+                default="batch",
+            ),
+            ParameterPrompt(
+                name="method",
+                prompt=PARAMETER_PROMPTS["batch_correction"]["method"],
+                type=str,
+                default="combat",
+                choices=["combat"],
+            ),
+            ParameterPrompt(
+                name="compute_embedding",
+                prompt=PARAMETER_PROMPTS["batch_correction"]["compute_embedding"],
+                type=bool,
+                default=True,
+            ),
+        ],
+        optional=True,
+    )
+
+def _spatial_gene_plot_step() -> PlanStep:
+    return PlanStep(
+        identifier="spatial_gene_plot",
+        title="Spatial gene expression",
+        description="Visualise selected gene expression on spatial coordinates.",
+        tool_cls=SpatialGenePlotTool,
+        param_prompts=[
+            ParameterPrompt(
+                name="adata_id",
+                prompt=PARAMETER_PROMPTS["spatial_gene_plot"]["adata_id"],
+                type=str,
+                context_key="adata_id",
+            ),
+            ParameterPrompt(
+                name="genes",
+                prompt=PARAMETER_PROMPTS["spatial_gene_plot"]["genes"],
+                type=str,
+            ),
+            ParameterPrompt(
+                name="obsm_key",
+                prompt=PARAMETER_PROMPTS["spatial_gene_plot"]["obsm_key"],
+                type=str,
+                default="spatial",
+                optional=True,
+            ),
+            ParameterPrompt(
+                name="point_size",
+                prompt=PARAMETER_PROMPTS["spatial_gene_plot"]["point_size"],
+                type=float,
+                default=5.0,
+                optional=True,
+            ),
+        ],
+        optional=True,
+    )
+
+def _umap_gene_plot_step() -> PlanStep:
+    return PlanStep(
+        identifier="umap_gene_plot",
+        title="UMAP gene expression",
+        description="Visualise selected gene expression on UMAP coordinates.",
+        tool_cls=UMAPGenePlotTool,
+        param_prompts=[
+            ParameterPrompt(
+                name="adata_id",
+                prompt=PARAMETER_PROMPTS["umap_gene_plot"]["adata_id"],
+                type=str,
+                context_key="adata_id",
+            ),
+            ParameterPrompt(
+                name="genes",
+                prompt=PARAMETER_PROMPTS["umap_gene_plot"]["genes"],
+                type=str,
+            ),
+            ParameterPrompt(
+                name="obsm_key",
+                prompt=PARAMETER_PROMPTS["umap_gene_plot"]["obsm_key"],
+                type=str,
+                default="X_umap",
+                optional=True,
+            ),
+            ParameterPrompt(
+                name="point_size",
+                prompt=PARAMETER_PROMPTS["umap_gene_plot"]["point_size"],
+                type=float,
+                default=5.0,
+                optional=True,
+            ),
+        ],
+        optional=True,
+    )
+
+def _pseudotime_step() -> PlanStep:
+    return PlanStep(
+        identifier="pseudotime",
+        title="Pseudotime (DPT)",
+        description="Compute diffusion pseudotime and visualise on UMAP.",
+        tool_cls=PseudotimeTool,
+        param_prompts=[
+            ParameterPrompt(
+                name="adata_id",
+                prompt=PARAMETER_PROMPTS["pseudotime"]["adata_id"],
+                type=str,
+                context_key="adata_id",
+            ),
+            ParameterPrompt(
+                name="root_cell",
+                prompt=PARAMETER_PROMPTS["pseudotime"]["root_cell"],
+                type=str,
+                optional=True,
+            ),
+            ParameterPrompt(
+                name="root_label",
+                prompt=PARAMETER_PROMPTS["pseudotime"]["root_label"],
+                type=str,
+                optional=True,
+            ),
+            ParameterPrompt(
+                name="label_key",
+                prompt=PARAMETER_PROMPTS["pseudotime"]["label_key"],
+                type=str,
+                default="leiden",
+                optional=True,
+            ),
+            ParameterPrompt(
+                name="neighbors_key",
+                prompt=PARAMETER_PROMPTS["pseudotime"]["neighbors_key"],
+                type=str,
+                optional=True,
+            ),
+        ],
+        optional=True,
+    )
+
+def _cell_communication_step() -> PlanStep:
+    return PlanStep(
+        identifier="cell_communication",
+        title="Cell-cell communication",
+        description="Infer ligand-receptor interactions across clusters.",
+        tool_cls=CellCommunicationTool,
+        param_prompts=[
+            ParameterPrompt(
+                name="adata_id",
+                prompt=PARAMETER_PROMPTS["cell_communication"]["adata_id"],
+                type=str,
+                context_key="adata_id",
+            ),
+            ParameterPrompt(
+                name="group_key",
+                prompt=PARAMETER_PROMPTS["cell_communication"]["group_key"],
+                type=str,
+                default="leiden",
+            ),
+            ParameterPrompt(
+                name="n_top_pairs",
+                prompt=PARAMETER_PROMPTS["cell_communication"]["n_top_pairs"],
+                type=int,
+                default=20,
+            ),
+            ParameterPrompt(
+                name="min_expr",
+                prompt=PARAMETER_PROMPTS["cell_communication"]["min_expr"],
+                type=float,
+                default=0.05,
+                optional=True,
+            ),
+        ],
+        optional=True,
+    )
+
 
 def _spatial_domain_step() -> PlanStep:
     return PlanStep(
@@ -225,6 +416,12 @@ def _cell_typing_step() -> PlanStep:
                 type=str,
                 default="predicted_type",
             ),
+            ParameterPrompt(
+                name="expected_types",
+                prompt="List expected cell types (comma-separated) if known:",
+                type=list,
+                optional=True,
+            ),
         ],
     optional=True,
     )
@@ -236,8 +433,13 @@ class PlanBuilder:
     def __init__(self) -> None:
         self._core_steps = [_metadata_step(), _preprocess_step()]
         optional_candidates = [
+            _batch_correction_step(),
             _de_step(),
             _spatial_domain_step(),
+            _umap_gene_plot_step(),
+            _spatial_gene_plot_step(),
+            _pseudotime_step(),
+            _cell_communication_step(),
             _cell_typing_step(),
         ]
         self._optional_steps = {step.identifier: step for step in optional_candidates}
@@ -358,11 +560,11 @@ class LLMPlanBuilder(PlanBuilder):
             response_plan = self._plan_with_llm(command)
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("Falling back to static plan builder due to planner error: %s", exc)
-            return fallback_plan
+            return self._append_included_steps(fallback_plan)
 
         if not response_plan:
             LOGGER.warning("LLM planner returned an empty plan; using fallback steps.")
-            return fallback_plan
+            return self._append_included_steps(fallback_plan)
 
         response_plan = self._append_missing_core_steps(response_plan)
         response_plan = self._append_included_steps(response_plan)
@@ -430,13 +632,26 @@ class LLMPlanBuilder(PlanBuilder):
         return "\n".join(lines)
 
     def _append_missing_core_steps(self, plan: List[PlanStep]) -> List[PlanStep]:
-        existing = {step.identifier for step in plan}
-        final_plan = list(plan)
+        """Ensure core steps appear first and in canonical order."""
+        final: List[PlanStep] = []
+        seen: set[str] = set()
+        plan_lookup = {step.identifier: step for step in plan}
+
+        # Always prepend core steps in defined order, reusing instances from plan when present
         for core_step in self._core_steps:
-            if core_step.identifier not in existing:
-                final_plan.insert(0, core_step)
-                existing.add(core_step.identifier)
-        return self._deduplicate_preserving_order(final_plan)
+            chosen = plan_lookup.get(core_step.identifier, core_step)
+            if chosen.identifier not in seen:
+                final.append(chosen)
+                seen.add(chosen.identifier)
+
+        # Append the rest preserving original order
+        for step in plan:
+            if step.identifier in seen:
+                continue
+            final.append(step)
+            seen.add(step.identifier)
+
+        return final
 
     def _append_included_steps(self, plan: List[PlanStep]) -> List[PlanStep]:
         existing = {step.identifier for step in plan}
